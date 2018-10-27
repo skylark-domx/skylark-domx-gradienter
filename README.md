@@ -3,13 +3,15 @@ The skylark gradient picker widget
 
 ## Dependences
 
-| Project                                                      | Status | Description                                                  |
-| ------------------------------------------------------------ | ------ | ------------------------------------------------------------ |
-| [skylark-langx](https://github.com/skylarklangx/skylark-langx) |        | Javascript language extension library                        |
-| [skylark-utils](https://github.com/skylarkutils/skylark-utils) |        | An Universal HTML5 Javascript Library                        |
-| [skylark-utils-layout](https://github.com/skylarkutils/skylark-utils-layout) |        | The dom layout features enhancement for skylark utils.       |
-| [skylark-juery](https://github.com/skylarkutils/skylark-jquery) |        | The  skylark extension library providing APIs that are fully compatible with jquery |
-| [skylark-utils-dom](https://github.com/skylarkutils/skylark-utils-dom) |        | An Universal DOM Utility Library                             |
+| Project                                                      | Status | Description                                           |
+| ------------------------------------------------------------ | ------ | ----------------------------------------------------- |
+| [skylark-langx](https://github.com/skylarklangx/skylark-langx) |        | Javascript language extension library                 |
+| [skylark-utils](https://github.com/skylarkutils/skylark-utils) |        | An Universal HTML5 Javascript Library                 |
+| [skylark-utils-color](https://github.com/skylarkutils/skylark-utils-color) |        | The dom layout features enhancement for skylark utils |
+| [skylark-utils-interact](https://github.com/skylarkutils/skylark-utils-interact) |        | The interact features enhancement for skylark utils   |
+| [skylark-ui-swt](https://github.com/skylarkui/skylark-ui-swt) |        | The skylark standard widget tookit                    |
+| [skylark-ui-colorpicker](https://github.com/skylarkutils/skylark-ui-colorpicker) |        | The color picker                                      |
+| [skylark-utils-dom](https://github.com/skylarkutils/skylark-utils-dom) |        | An Universal DOM Utility Library                      |
 
 ## Different builds
 
