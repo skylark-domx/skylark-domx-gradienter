@@ -37,11 +37,16 @@
                 deps: deps.map(function(dep){
                   return absolute(dep,id);
                 }),
+                resolved: false,
                 exports: null
             };
             require(id);
         } else {
-            map[id] = factory;
+            map[id] = {
+                factory : null,
+                resolved : true,
+                exports : factory
+            };
         }
     };
     require = globals.require = function(id) {
@@ -49,14 +54,15 @@
             throw new Error('Module ' + id + ' has not been defined');
         }
         var module = map[id];
-        if (!module.exports) {
+        if (!module.resolved) {
             var args = [];
 
             module.deps.forEach(function(dep){
                 args.push(require(dep));
             })
 
-            module.exports = module.factory.apply(window, args);
+            module.exports = module.factory.apply(globals, args) || null;
+            module.resolved = true;
         }
         return module.exports;
     };
@@ -72,7 +78,7 @@
     var skylarkjs = require("skylark-langx/skylark");
 
     if (isCmd) {
-      exports = skylarkjs;
+      module.exports = skylarkjs;
     } else {
       globals.skylarkjs  = skylarkjs;
     }
@@ -239,20 +245,20 @@ define('skylark-ui-gradienter/Drag',[],function() {
     return Drag;
 });
 define('skylark-ui-gradienter/Gradienter',[
-   "skylark-langx/skylark",
+    "skylark-langx/skylark",
     "skylark-langx/langx",
-    "skylark-utils/browser",
-    "skylark-utils/noder",
-    "skylark-utils/eventer",
-    "skylark-utils/finder",
-    "skylark-utils/query",
-    "skylark-utils-color/colors",
-    "skylark-utils-color/Color",
-    "skylark-ui-swt/ui",
+    "skylark-utils-dom/browser",
+    "skylark-utils-dom/noder",
+    "skylark-utils-dom/eventer",
+    "skylark-utils-dom/finder",
+    "skylark-utils-dom/query",
+    "skylark-data-color/colors",
+    "skylark-data-color/Color",
+    "skylark-ui-swt/swt",
     "skylark-ui-swt/Widget",
     "skylark-ui-colorpicker/ColorPicker",
     "./Drag"
-],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, ui, Widget,ColorPicker,Drag) {
+],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, swt, Widget,ColorPicker,Drag) {
 
 
     /*
@@ -292,7 +298,7 @@ define('skylark-ui-gradienter/Gradienter',[
     }
 
 
-    var gradX = ui.Gradienter = function(id, _options) {
+    var gradX  = function(id, _options) {
 
 
         var options = {
@@ -830,7 +836,7 @@ define('skylark-ui-gradienter/Gradienter',[
                     // Work around Chrome's little problem
                     $this.mouseup(function() {
                         // Prevent further mouseup intervention
-                        $this.unbind("mouseup");
+                        $this.off("mouseup");
                         return false;
                     });
                 });
@@ -1000,7 +1006,7 @@ define('skylark-ui-gradienter/Gradienter',[
 
     };
 
-    return gradX;
+    return skylark.attach("ui.Gradienter",gradX);
 });
 define('skylark-ui-gradienter/main',[
     "./Gradienter",
@@ -1012,3 +1018,4 @@ define('skylark-ui-gradienter', ['skylark-ui-gradienter/main'], function (main) 
 
 
 },this);
+//# sourceMappingURL=sourcemaps/skylark-ui-gradienter.js.map

@@ -1,18 +1,18 @@
 define([
-   "skylark-langx/skylark",
+    "skylark-langx/skylark",
     "skylark-langx/langx",
-    "skylark-utils/browser",
-    "skylark-utils/noder",
-    "skylark-utils/eventer",
-    "skylark-utils/finder",
-    "skylark-utils/query",
-    "skylark-utils-color/colors",
-    "skylark-utils-color/Color",
-    "skylark-ui-swt/ui",
+    "skylark-utils-dom/browser",
+    "skylark-utils-dom/noder",
+    "skylark-utils-dom/eventer",
+    "skylark-utils-dom/finder",
+    "skylark-utils-dom/query",
+    "skylark-data-color/colors",
+    "skylark-data-color/Color",
+    "skylark-ui-swt/swt",
     "skylark-ui-swt/Widget",
     "skylark-ui-colorpicker/ColorPicker",
     "./Drag"
-],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, ui, Widget,ColorPicker,Drag) {
+],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, swt, Widget,ColorPicker,Drag) {
 
 
     /*
@@ -52,7 +52,7 @@ define([
     }
 
 
-    var gradX = ui.Gradienter = function(id, _options) {
+    var gradX  = function(id, _options) {
 
 
         var options = {
@@ -590,7 +590,7 @@ define([
                     // Work around Chrome's little problem
                     $this.mouseup(function() {
                         // Prevent further mouseup intervention
-                        $this.unbind("mouseup");
+                        $this.off("mouseup");
                         return false;
                     });
                 });
@@ -760,5 +760,5 @@ define([
 
     };
 
-    return gradX;
+    return skylark.attach("ui.Gradienter",gradX);
 });

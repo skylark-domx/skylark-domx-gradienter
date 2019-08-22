@@ -37,11 +37,16 @@
                 deps: deps.map(function(dep){
                   return absolute(dep,id);
                 }),
+                resolved: false,
                 exports: null
             };
             require(id);
         } else {
-            map[id] = factory;
+            map[id] = {
+                factory : null,
+                resolved : true,
+                exports : factory
+            };
         }
     };
     require = globals.require = function(id) {
@@ -49,14 +54,15 @@
             throw new Error('Module ' + id + ' has not been defined');
         }
         var module = map[id];
-        if (!module.exports) {
+        if (!module.resolved) {
             var args = [];
 
             module.deps.forEach(function(dep){
                 args.push(require(dep));
             })
 
-            module.exports = module.factory.apply(window, args);
+            module.exports = module.factory.apply(globals, args) || null;
+            module.resolved = true;
         }
         return module.exports;
     };
@@ -72,7 +78,7 @@
     var skylarkjs = require("skylark-langx/skylark");
 
     if (isCmd) {
-      exports = skylarkjs;
+      module.exports = skylarkjs;
     } else {
       globals.skylarkjs  = skylarkjs;
     }
@@ -80,30 +86,426 @@
 
 })(function(define,require) {
 
-define('skylark-langx/skylark',[], function() {
-    var skylark = {
+define('skylark-langx/_attach',[],function(){
+    return  function attach(obj1,path,obj2) {
+        if (typeof path == "string") {
+            path = path.split(".");//[path]
+        };
+        var length = path.length,
+            ns=obj1,
+            i=0,
+            name = path[i++];
 
+        while (i < length) {
+            ns = ns[name] = ns[name] || {};
+            name = path[i++];
+        }
+
+        return ns[name] = obj2;
+    }
+});
+define('skylark-langx/skylark',[
+    "./_attach"
+], function(_attach) {
+    var skylark = {
+    	attach : function(path,obj) {
+    		return _attach(skylark,path,obj);
+    	}
     };
     return skylark;
 });
 
-define('skylark-langx/langx',["./skylark"], function(skylark) {
-    "use strict";
-    var toString = {}.toString,
-        concat = Array.prototype.concat,
-        indexOf = Array.prototype.indexOf,
+define('skylark-langx/types',[
+],function(){
+    var toString = {}.toString;
+    
+    var type = (function() {
+        var class2type = {};
+
+        // Populate the class2type map
+        "Boolean Number String Function Array Date RegExp Object Error Symbol".split(" ").forEach(function(name) {
+            class2type["[object " + name + "]"] = name.toLowerCase();
+        });
+
+        return function type(obj) {
+            return obj == null ? String(obj) :
+                class2type[toString.call(obj)] || "object";
+        };
+    })();
+
+    function isArray(object) {
+        return object && object.constructor === Array;
+    }
+
+
+    /**
+     * Checks if `value` is array-like. A value is considered array-like if it's
+     * not a function/string/element and has a `value.length` that's an integer greater than or
+     * equal to `0` and less than or equal to `Number.MAX_SAFE_INTEGER`.
+     *
+     * @category Lang
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if `value` is array-like, else `false`.
+     * @example
+     *
+     * isArrayLike([1, 2, 3])
+     * // => true
+     *
+     * isArrayLike(document.body.children)
+     * // => false
+     *
+     * isArrayLike('abc')
+     * // => true
+     *
+     * isArrayLike(Function)
+     * // => false
+     */    
+    function isArrayLike(obj) {
+        return !isString(obj) && !isHtmlNode(obj) && typeof obj.length == 'number' && !isFunction(obj);
+    }
+
+    /**
+     * Checks if `value` is classified as a boolean primitive or object.
+     *
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if `value` is a boolean, else `false`.
+     * @example
+     *
+     * isBoolean(false)
+     * // => true
+     *
+     * isBoolean(null)
+     * // => false
+     */
+    function isBoolean(obj) {
+        return typeof(obj) === "boolean";
+    }
+
+    function isDefined(obj) {
+        return typeof obj !== 'undefined';
+    }
+
+    function isDocument(obj) {
+        return obj != null && obj.nodeType == obj.DOCUMENT_NODE;
+    }
+
+    function isEmptyObject(obj) {
+        var name;
+        for (name in obj) {
+            if (obj[name] !== null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+
+    /**
+     * Checks if `value` is classified as a `Function` object.
+     *
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if `value` is a function, else `false`.
+     * @example
+     *
+     * isFunction(parseInt)
+     * // => true
+     *
+     * isFunction(/abc/)
+     * // => false
+     */
+    function isFunction(value) {
+        return type(value) == "function";
+    }
+
+    function isHtmlNode(obj) {
+        return obj && obj.nodeType; // obj instanceof Node; //Consider the elements in IFRAME
+    }
+
+    function isInstanceOf( /*Object*/ value, /*Type*/ type) {
+        //Tests whether the value is an instance of a type.
+        if (value === undefined) {
+            return false;
+        } else if (value === null || type == Object) {
+            return true;
+        } else if (typeof value === "number") {
+            return type === Number;
+        } else if (typeof value === "string") {
+            return type === String;
+        } else if (typeof value === "boolean") {
+            return type === Boolean;
+        } else if (typeof value === "string") {
+            return type === String;
+        } else {
+            return (value instanceof type) || (value && value.isInstanceOf ? value.isInstanceOf(type) : false);
+        }
+    }
+
+    function isNull(value) {
+      return type(value) === "null";
+    }
+
+    function isNumber(obj) {
+        return typeof obj == 'number';
+    }
+
+    function isObject(obj) {
+        return type(obj) == "object";
+    }
+
+    function isPlainObject(obj) {
+        return isObject(obj) && !isWindow(obj) && Object.getPrototypeOf(obj) == Object.prototype;
+    }
+
+    function isString(obj) {
+        return typeof obj === 'string';
+    }
+
+    function isWindow(obj) {
+        return obj && obj == obj.window;
+    }
+
+    function isSameOrigin(href) {
+        if (href) {
+            var origin = location.protocol + '//' + location.hostname;
+            if (location.port) {
+                origin += ':' + location.port;
+            }
+            return href.startsWith(origin);
+        }
+    }
+
+    /**
+     * Checks if `value` is classified as a `Symbol` primitive or object.
+     *
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if `value` is a symbol, else `false`.
+     * @example
+     *
+     * _.isSymbol(Symbol.iterator);
+     * // => true
+     *
+     * _.isSymbol('abc');
+     * // => false
+     */
+    function isSymbol(value) {
+      return typeof value == 'symbol' ||
+        (isObjectLike(value) && objectToString.call(value) == symbolTag);
+    }
+
+    function isUndefined(value) {
+      return value === undefined
+    }
+
+    return {
+
+        isArray: isArray,
+
+        isArrayLike: isArrayLike,
+
+        isBoolean: isBoolean,
+
+        isDefined: isDefined,
+
+        isDocument: isDocument,
+
+        isEmpty : isEmptyObject,
+
+        isEmptyObject: isEmptyObject,
+
+        isFunction: isFunction,
+
+        isHtmlNode: isHtmlNode,
+
+        isNull: isNull,
+
+        isNumber: isNumber,
+
+        isNumeric: isNumber,
+
+        isObject: isObject,
+
+        isPlainObject: isPlainObject,
+
+        isString: isString,
+
+        isSameOrigin: isSameOrigin,
+
+        isSymbol : isSymbol,
+
+        isUndefined: isUndefined,
+
+        isWindow: isWindow,
+
+        type: type
+    };
+
+});
+define('skylark-langx/numbers',[
+	"./types"
+],function(types){
+	var isObject = types.isObject,
+		isSymbol = types.isSymbol;
+
+	var INFINITY = 1 / 0,
+	    MAX_SAFE_INTEGER = 9007199254740991,
+	    MAX_INTEGER = 1.7976931348623157e+308,
+	    NAN = 0 / 0;
+
+	/** Used to match leading and trailing whitespace. */
+	var reTrim = /^\s+|\s+$/g;
+
+	/** Used to detect bad signed hexadecimal string values. */
+	var reIsBadHex = /^[-+]0x[0-9a-f]+$/i;
+
+	/** Used to detect binary string values. */
+	var reIsBinary = /^0b[01]+$/i;
+
+	/** Used to detect octal string values. */
+	var reIsOctal = /^0o[0-7]+$/i;
+
+	/** Used to detect unsigned integer values. */
+	var reIsUint = /^(?:0|[1-9]\d*)$/;
+
+	/** Built-in method references without a dependency on `root`. */
+	var freeParseInt = parseInt;
+
+	/**
+	 * Converts `value` to a finite number.
+	 *
+	 * @static
+	 * @memberOf _
+	 * @since 4.12.0
+	 * @category Lang
+	 * @param {*} value The value to convert.
+	 * @returns {number} Returns the converted number.
+	 * @example
+	 *
+	 * _.toFinite(3.2);
+	 * // => 3.2
+	 *
+	 * _.toFinite(Number.MIN_VALUE);
+	 * // => 5e-324
+	 *
+	 * _.toFinite(Infinity);
+	 * // => 1.7976931348623157e+308
+	 *
+	 * _.toFinite('3.2');
+	 * // => 3.2
+	 */
+	function toFinite(value) {
+	  if (!value) {
+	    return value === 0 ? value : 0;
+	  }
+	  value = toNumber(value);
+	  if (value === INFINITY || value === -INFINITY) {
+	    var sign = (value < 0 ? -1 : 1);
+	    return sign * MAX_INTEGER;
+	  }
+	  return value === value ? value : 0;
+	}
+
+	/**
+	 * Converts `value` to an integer.
+	 *
+	 * **Note:** This method is loosely based on
+	 * [`ToInteger`](http://www.ecma-international.org/ecma-262/7.0/#sec-tointeger).
+	 *
+	 * @static
+	 * @memberOf _
+	 * @param {*} value The value to convert.
+	 * @returns {number} Returns the converted integer.
+	 * @example
+	 *
+	 * _.toInteger(3.2);
+	 * // => 3
+	 *
+	 * _.toInteger(Number.MIN_VALUE);
+	 * // => 0
+	 *
+	 * _.toInteger(Infinity);
+	 * // => 1.7976931348623157e+308
+	 *
+	 * _.toInteger('3.2');
+	 * // => 3
+	 */
+	function toInteger(value) {
+	  var result = toFinite(value),
+	      remainder = result % 1;
+
+	  return result === result ? (remainder ? result - remainder : result) : 0;
+	}	
+
+	/**
+	 * Converts `value` to a number.
+	 *
+	 * @static
+	 * @memberOf _
+	 * @since 4.0.0
+	 * @category Lang
+	 * @param {*} value The value to process.
+	 * @returns {number} Returns the number.
+	 * @example
+	 *
+	 * _.toNumber(3.2);
+	 * // => 3.2
+	 *
+	 * _.toNumber(Number.MIN_VALUE);
+	 * // => 5e-324
+	 *
+	 * _.toNumber(Infinity);
+	 * // => Infinity
+	 *
+	 * _.toNumber('3.2');
+	 * // => 3.2
+	 */
+	function toNumber(value) {
+	  if (typeof value == 'number') {
+	    return value;
+	  }
+	  if (isSymbol(value)) {
+	    return NAN;
+	  }
+	  if (isObject(value)) {
+	    var other = typeof value.valueOf == 'function' ? value.valueOf() : value;
+	    value = isObject(other) ? (other + '') : other;
+	  }
+	  if (typeof value != 'string') {
+	    return value === 0 ? value : +value;
+	  }
+	  value = value.replace(reTrim, '');
+	  var isBinary = reIsBinary.test(value);
+	  return (isBinary || reIsOctal.test(value))
+	    ? freeParseInt(value.slice(2), isBinary ? 2 : 8)
+	    : (reIsBadHex.test(value) ? NAN : +value);
+	}
+
+	return  {
+		toFinite : toFinite,
+		toNumber : toNumber,
+		toInteger : toInteger
+	}
+});
+define('skylark-langx/objects',[
+    "./_attach",
+	"./types",
+    "./numbers"
+],function(_attach,types,numbers){
+	var hasOwnProperty = Object.prototype.hasOwnProperty,
         slice = Array.prototype.slice,
-        filter = Array.prototype.filter,
-        hasOwnProperty = Object.prototype.hasOwnProperty;
+        isBoolean = types.isBoolean,
+        isFunction = types.isFunction,
+		isObject = types.isObject,
+		isPlainObject = types.isPlainObject,
+		isArray = types.isArray,
+        isArrayLike = types.isArrayLike,
+        isString = types.isString,
+        toInteger = numbers.toInteger;
 
-
-    var  PGLISTENERS = Symbol ? Symbol() : '__pglisteners';
-
-    // An internal function for creating assigner functions.
+     // An internal function for creating assigner functions.
     function createAssigner(keysFunc, defaults) {
         return function(obj) {
           var length = arguments.length;
-          if (defaults) obj = Object(obj);
+          if (defaults) obj = Object(obj);  
           if (length < 2 || obj == null) return obj;
           for (var index = 1; index < length; index++) {
             var source = arguments[index],
@@ -225,118 +627,633 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
         return true;
     };
 
-    var undefined, nextId = 0;
-    function advise(dispatcher, type, advice, receiveArguments){
-        var previous = dispatcher[type];
-        var around = type == "around";
-        var signal;
-        if(around){
-            var advised = advice(function(){
-                return previous.advice(this, arguments);
-            });
-            signal = {
-                remove: function(){
-                    if(advised){
-                        advised = dispatcher = advice = null;
-                    }
-                },
-                advice: function(target, args){
-                    return advised ?
-                        advised.apply(target, args) :  // called the advised function
-                        previous.advice(target, args); // cancelled, skip to next one
-                }
-            };
-        }else{
-            // create the remove handler
-            signal = {
-                remove: function(){
-                    if(signal.advice){
-                        var previous = signal.previous;
-                        var next = signal.next;
-                        if(!next && !previous){
-                            delete dispatcher[type];
-                        }else{
-                            if(previous){
-                                previous.next = next;
-                            }else{
-                                dispatcher[type] = next;
-                            }
-                            if(next){
-                                next.previous = previous;
-                            }
-                        }
-
-                        // remove the advice to signal that this signal has been removed
-                        dispatcher = advice = signal.advice = null;
-                    }
-                },
-                id: nextId++,
-                advice: advice,
-                receiveArguments: receiveArguments
-            };
-        }
-        if(previous && !around){
-            if(type == "after"){
-                // add the listener to the end of the list
-                // note that we had to change this loop a little bit to workaround a bizarre IE10 JIT bug
-                while(previous.next && (previous = previous.next)){}
-                previous.next = signal;
-                signal.previous = previous;
-            }else if(type == "before"){
-                // add to beginning
-                dispatcher[type] = signal;
-                signal.next = previous;
-                previous.previous = signal;
-            }
-        }else{
-            // around or first one just replaces
-            dispatcher[type] = signal;
-        }
-        return signal;
+    // Retrieve all the property names of an object.
+    function allKeys(obj) {
+        if (!isObject(obj)) return [];
+        var keys = [];
+        for (var key in obj) keys.push(key);
+        return keys;
     }
-    function aspect(type){
-        return function(target, methodName, advice, receiveArguments){
-            var existing = target[methodName], dispatcher;
-            if(!existing || existing.target != target){
-                // no dispatcher in place
-                target[methodName] = dispatcher = function(){
-                    var executionId = nextId;
-                    // before advice
-                    var args = arguments;
-                    var before = dispatcher.before;
-                    while(before){
-                        args = before.advice.apply(this, args) || args;
-                        before = before.next;
-                    }
-                    // around advice
-                    if(dispatcher.around){
-                        var results = dispatcher.around.advice(this, args);
-                    }
-                    // after advice
-                    var after = dispatcher.after;
-                    while(after && after.id < executionId){
-                        if(after.receiveArguments){
-                            var newResults = after.advice.apply(this, args);
-                            // change the return value only if a new value was returned
-                            results = newResults === undefined ? results : newResults;
-                        }else{
-                            results = after.advice.call(this, results, args);
+
+    function each(obj, callback) {
+        var length, key, i, undef, value;
+
+        if (obj) {
+            length = obj.length;
+
+            if (length === undef) {
+                // Loop object items
+                for (key in obj) {
+                    if (obj.hasOwnProperty(key)) {
+                        value = obj[key];
+                        if (callback.call(value, key, value) === false) {
+                            break;
                         }
-                        after = after.next;
                     }
-                    return results;
-                };
-                if(existing){
-                    dispatcher.around = {advice: function(target, args){
-                        return existing.apply(target, args);
-                    }};
                 }
-                dispatcher.target = target;
+            } else {
+                // Loop array items
+                for (i = 0; i < length; i++) {
+                    value = obj[i];
+                    if (callback.call(value, i, value) === false) {
+                        break;
+                    }
+                }
             }
-            var results = advise((dispatcher || existing), type, advice, receiveArguments);
-            advice = null;
-            return results;
+        }
+
+        return this;
+    }
+
+    function extend(target) {
+        var deep, args = slice.call(arguments, 1);
+        if (typeof target == 'boolean') {
+            deep = target
+            target = args.shift()
+        }
+        if (args.length == 0) {
+            args = [target];
+            target = this;
+        }
+        args.forEach(function(arg) {
+            mixin(target, arg, deep);
+        });
+        return target;
+    }
+
+    // Retrieve the names of an object's own properties.
+    // Delegates to **ECMAScript 5**'s native `Object.keys`.
+    function keys(obj) {
+        if (isObject(obj)) return [];
+        var keys = [];
+        for (var key in obj) if (has(obj, key)) keys.push(key);
+        return keys;
+    }
+
+    function has(obj, path) {
+        if (!isArray(path)) {
+            return obj != null && hasOwnProperty.call(obj, path);
+        }
+        var length = path.length;
+        for (var i = 0; i < length; i++) {
+            var key = path[i];
+            if (obj == null || !hasOwnProperty.call(obj, key)) {
+                return false;
+            }
+            obj = obj[key];
+        }
+        return !!length;
+    }
+
+    /**
+     * Checks if `value` is in `collection`. If `collection` is a string, it's
+     * checked for a substring of `value`, otherwise
+     * [`SameValueZero`](http://ecma-international.org/ecma-262/7.0/#sec-samevaluezero)
+     * is used for equality comparisons. If `fromIndex` is negative, it's used as
+     * the offset from the end of `collection`.
+     *
+     * @static
+     * @memberOf _
+     * @since 0.1.0
+     * @category Collection
+     * @param {Array|Object|string} collection The collection to inspect.
+     * @param {*} value The value to search for.
+     * @param {number} [fromIndex=0] The index to search from.
+     * @param- {Object} [guard] Enables use as an iteratee for methods like `_.reduce`.
+     * @returns {boolean} Returns `true` if `value` is found, else `false`.
+     * @example
+     *
+     * _.includes([1, 2, 3], 1);
+     * // => true
+     *
+     * _.includes([1, 2, 3], 1, 2);
+     * // => false
+     *
+     * _.includes({ 'a': 1, 'b': 2 }, 1);
+     * // => true
+     *
+     * _.includes('abcd', 'bc');
+     * // => true
+     */
+    function includes(collection, value, fromIndex, guard) {
+      collection = isArrayLike(collection) ? collection : values(collection);
+      fromIndex = (fromIndex && !guard) ? toInteger(fromIndex) : 0;
+
+      var length = collection.length;
+      if (fromIndex < 0) {
+        fromIndex = nativeMax(length + fromIndex, 0);
+      }
+      return isString(collection)
+        ? (fromIndex <= length && collection.indexOf(value, fromIndex) > -1)
+        : (!!length && baseIndexOf(collection, value, fromIndex) > -1);
+    }
+
+
+   // Perform a deep comparison to check if two objects are equal.
+    function isEqual(a, b) {
+        return eq(a, b);
+    }
+
+    // Returns whether an object has a given set of `key:value` pairs.
+    function isMatch(object, attrs) {
+        var keys = keys(attrs), length = keys.length;
+        if (object == null) return !length;
+        var obj = Object(object);
+        for (var i = 0; i < length; i++) {
+          var key = keys[i];
+          if (attrs[key] !== obj[key] || !(key in obj)) return false;
+        }
+        return true;
+    }    
+
+    function _mixin(target, source, deep, safe) {
+        for (var key in source) {
+            //if (!source.hasOwnProperty(key)) {
+            //    continue;
+            //}
+            if (safe && target[key] !== undefined) {
+                continue;
+            }
+            if (deep && (isPlainObject(source[key]) || isArray(source[key]))) {
+                if (isPlainObject(source[key]) && !isPlainObject(target[key])) {
+                    target[key] = {};
+                }
+                if (isArray(source[key]) && !isArray(target[key])) {
+                    target[key] = [];
+                }
+                _mixin(target[key], source[key], deep, safe);
+            } else if (source[key] !== undefined) {
+                target[key] = source[key]
+            }
+        }
+        return target;
+    }
+
+    function _parseMixinArgs(args) {
+        var params = slice.call(arguments, 0),
+            target = params.shift(),
+            deep = false;
+        if (isBoolean(params[params.length - 1])) {
+            deep = params.pop();
+        }
+
+        return {
+            target: target,
+            sources: params,
+            deep: deep
         };
+    }
+
+    function mixin() {
+        var args = _parseMixinArgs.apply(this, arguments);
+
+        args.sources.forEach(function(source) {
+            _mixin(args.target, source, args.deep, false);
+        });
+        return args.target;
+    }
+
+   // Return a copy of the object without the blacklisted properties.
+    function omit(obj, prop1,prop2) {
+        if (!obj) {
+            return null;
+        }
+        var result = mixin({},obj);
+        for(var i=1;i<arguments.length;i++) {
+            var pn = arguments[i];
+            if (pn in obj) {
+                delete result[pn];
+            }
+        }
+        return result;
+
+    }
+
+   // Return a copy of the object only containing the whitelisted properties.
+    function pick(obj,prop1,prop2) {
+        if (!obj) {
+            return null;
+        }
+        var result = {};
+        for(var i=1;i<arguments.length;i++) {
+            var pn = arguments[i];
+            if (pn in obj) {
+                result[pn] = obj[pn];
+            }
+        }
+        return result;
+    }
+
+    function removeItem(items, item) {
+        if (isArray(items)) {
+            var idx = items.indexOf(item);
+            if (idx != -1) {
+                items.splice(idx, 1);
+            }
+        } else if (isPlainObject(items)) {
+            for (var key in items) {
+                if (items[key] == item) {
+                    delete items[key];
+                    break;
+                }
+            }
+        }
+
+        return this;
+    }
+
+    function result(obj, path, fallback) {
+        if (!isArray(path)) {
+            path = path.split(".");//[path]
+        };
+        var length = path.length;
+        if (!length) {
+          return isFunction(fallback) ? fallback.call(obj) : fallback;
+        }
+        for (var i = 0; i < length; i++) {
+          var prop = obj == null ? void 0 : obj[path[i]];
+          if (prop === void 0) {
+            prop = fallback;
+            i = length; // Ensure we don't continue iterating.
+          }
+          obj = isFunction(prop) ? prop.call(obj) : prop;
+        }
+
+        return obj;
+    }
+
+    function safeMixin() {
+        var args = _parseMixinArgs.apply(this, arguments);
+
+        args.sources.forEach(function(source) {
+            _mixin(args.target, source, args.deep, true);
+        });
+        return args.target;
+    }
+
+    // Retrieve the values of an object's properties.
+    function values(obj) {
+        var keys = allKeys(obj);
+        var length = keys.length;
+        var values = Array(length);
+        for (var i = 0; i < length; i++) {
+            values[i] = obj[keys[i]];
+        }
+        return values;
+    }
+
+    function clone( /*anything*/ src,checkCloneMethod) {
+        var copy;
+        if (src === undefined || src === null) {
+            copy = src;
+        } else if (checkCloneMethod && src.clone) {
+            copy = src.clone();
+        } else if (isArray(src)) {
+            copy = [];
+            for (var i = 0; i < src.length; i++) {
+                copy.push(clone(src[i]));
+            }
+        } else if (isPlainObject(src)) {
+            copy = {};
+            for (var key in src) {
+                copy[key] = clone(src[key]);
+            }
+        } else {
+            copy = src;
+        }
+
+        return copy;
+
+    }
+
+    return {
+        allKeys: allKeys,
+
+        attach : _attach,
+
+        clone: clone,
+
+        defaults : createAssigner(allKeys, true),
+
+        each : each,
+
+        extend : extend,
+
+        has: has,
+
+        isEqual: isEqual,   
+
+        includes: includes,
+
+        isMatch: isMatch,
+
+        keys: keys,
+
+        mixin: mixin,
+
+        omit: omit,
+
+        pick: pick,
+
+        removeItem: removeItem,
+
+        result : result,
+        
+        safeMixin: safeMixin,
+
+        values: values
+    };
+
+
+
+});
+define('skylark-langx/arrays',[
+	"./types",
+  "./objects"
+],function(types,objects){
+	var filter = Array.prototype.filter,
+		isArrayLike = types.isArrayLike;
+
+    /**
+     * The base implementation of `_.findIndex` and `_.findLastIndex` without
+     * support for iteratee shorthands.
+     *
+     * @param {Array} array The array to inspect.
+     * @param {Function} predicate The function invoked per iteration.
+     * @param {number} fromIndex The index to search from.
+     * @param {boolean} [fromRight] Specify iterating from right to left.
+     * @returns {number} Returns the index of the matched value, else `-1`.
+     */
+    function baseFindIndex(array, predicate, fromIndex, fromRight) {
+      var length = array.length,
+          index = fromIndex + (fromRight ? 1 : -1);
+
+      while ((fromRight ? index-- : ++index < length)) {
+        if (predicate(array[index], index, array)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    /**
+     * The base implementation of `_.indexOf` without `fromIndex` bounds checks.
+     *
+     * @param {Array} array The array to inspect.
+     * @param {*} value The value to search for.
+     * @param {number} fromIndex The index to search from.
+     * @returns {number} Returns the index of the matched value, else `-1`.
+     */
+    function baseIndexOf(array, value, fromIndex) {
+      if (value !== value) {
+        return baseFindIndex(array, baseIsNaN, fromIndex);
+      }
+      var index = fromIndex - 1,
+          length = array.length;
+
+      while (++index < length) {
+        if (array[index] === value) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    /**
+     * The base implementation of `isNaN` without support for number objects.
+     *
+     * @private
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if `value` is `NaN`, else `false`.
+     */
+    function baseIsNaN(value) {
+      return value !== value;
+    }
+
+
+    function compact(array) {
+        return filter.call(array, function(item) {
+            return item != null;
+        });
+    }
+
+    function filter2(array,func) {
+      return filter.call(array,func);
+    }
+
+    function flatten(array) {
+        if (isArrayLike(array)) {
+            var result = [];
+            for (var i = 0; i < array.length; i++) {
+                var item = array[i];
+                if (isArrayLike(item)) {
+                    for (var j = 0; j < item.length; j++) {
+                        result.push(item[j]);
+                    }
+                } else {
+                    result.push(item);
+                }
+            }
+            return result;
+        } else {
+            return array;
+        }
+        //return array.length > 0 ? concat.apply([], array) : array;
+    }
+
+    function grep(array, callback) {
+        var out = [];
+
+        objects.each(array, function(i, item) {
+            if (callback(item, i)) {
+                out.push(item);
+            }
+        });
+
+        return out;
+    }
+
+    function inArray(item, array) {
+        if (!array) {
+            return -1;
+        }
+        var i;
+
+        if (array.indexOf) {
+            return array.indexOf(item);
+        }
+
+        i = array.length;
+        while (i--) {
+            if (array[i] === item) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    function makeArray(obj, offset, startWith) {
+       if (isArrayLike(obj) ) {
+        return (startWith || []).concat(Array.prototype.slice.call(obj, offset || 0));
+      }
+
+      // array of single index
+      return [ obj ];             
+    }
+
+
+    function forEach (arr, fn) {
+      if (arr.forEach) return arr.forEach(fn)
+      for (var i = 0; i < arr.length; i++) fn(arr[i], i);
+    }
+
+    function map(elements, callback) {
+        var value, values = [],
+            i, key
+        if (isArrayLike(elements))
+            for (i = 0; i < elements.length; i++) {
+                value = callback.call(elements[i], elements[i], i);
+                if (value != null) values.push(value)
+            }
+        else
+            for (key in elements) {
+                value = callback.call(elements[key], elements[key], key);
+                if (value != null) values.push(value)
+            }
+        return flatten(values)
+    }
+
+
+    function merge( first, second ) {
+      var l = second.length,
+          i = first.length,
+          j = 0;
+
+      if ( typeof l === "number" ) {
+        for ( ; j < l; j++ ) {
+          first[ i++ ] = second[ j ];
+        }
+      } else {
+        while ( second[j] !== undefined ) {
+          first[ i++ ] = second[ j++ ];
+        }
+      }
+
+      first.length = i;
+
+      return first;
+    }
+
+    function reduce(array,callback,initialValue) {
+        return Array.prototype.reduce.call(array,callback,initialValue);
+    }
+
+    function uniq(array) {
+        return filter.call(array, function(item, idx) {
+            return array.indexOf(item) == idx;
+        })
+    }
+
+    return {
+        baseFindIndex: baseFindIndex,
+
+        baseIndexOf : baseIndexOf,
+        
+        compact: compact,
+
+        first : function(items,n) {
+            if (n) {
+                return items.slice(0,n);
+            } else {
+                return items[0];
+            }
+        },
+
+        filter : filter2,
+        
+        flatten: flatten,
+
+        grep: grep,
+
+        inArray: inArray,
+
+        makeArray: makeArray,
+
+        merge : merge,
+
+        forEach : forEach,
+
+        map : map,
+        
+        reduce : reduce,
+
+        uniq : uniq
+
+    }
+});
+define('skylark-langx/klass',[
+    "./arrays",
+    "./objects",
+    "./types"
+],function(arrays,objects,types){
+    var uniq = arrays.uniq,
+        has = objects.has,
+        mixin = objects.mixin,
+        isArray = types.isArray,
+        isDefined = types.isDefined;
+
+/* for reference 
+ function klass(props,parent) {
+    var ctor = function(){
+        this._construct();
+    };
+    ctor.prototype = props;
+    if (parent) {
+        ctor._proto_ = parent;
+        props.__proto__ = parent.prototype;
+    }
+    return ctor;
+}
+
+// Type some JavaScript code here.
+let animal = klass({
+  _construct(){
+      this.name = this.name + ",hi";
+  },
+    
+  name: "Animal",
+  eat() {         // [[HomeObject]] == animal
+    alert(`${this.name} eats.`);
+  }
+    
+    
+});
+
+
+let rabbit = klass({
+  name: "Rabbit",
+  _construct(){
+      super._construct();
+  },
+  eat() {         // [[HomeObject]] == rabbit
+    super.eat();
+  }
+},animal);
+
+let longEar = klass({
+  name: "Long Ear",
+  eat() {         // [[HomeObject]] == longEar
+    super.eat();
+  }
+},rabbit);
+*/
+    
+    function inherit(ctor, base) {
+        var f = function() {};
+        f.prototype = base.prototype;
+
+        ctor.prototype = new f();
     }
 
     var f1 = function() {
@@ -344,7 +1261,8 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
             // Copy the properties to the prototype of the class.
             var proto = ctor.prototype,
                 _super = ctor.superclass.prototype,
-                noOverrided = options && options.noOverrided;
+                noOverrided = options && options.noOverrided,
+                overrides = options && options.overrides || {};
 
             for (var name in props) {
                 if (name === "constructor") {
@@ -373,7 +1291,7 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
                             };
                         })(name, prop, _super[name]) :
                         prop;
-                } else if (typeof prop == "object" && prop!==null && (prop.get)) {
+                } else if (types.isPlainObject(prop) && prop!==null && (prop.get)) {
                     Object.defineProperty(proto,name,prop);
                 } else {
                     proto[name] = prop;
@@ -440,6 +1358,14 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
             return newCtor;
         }
 
+        function _constructor ()  {
+            if (this._construct) {
+                return this._construct.apply(this, arguments);
+            } else  if (this.init) {
+                return this.init.apply(this, arguments);
+            }
+        }
+
         return function createClass(props, parent, mixins,options) {
             if (isArray(parent)) {
                 options = mixins;
@@ -463,16 +1389,6 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
                 innerParent = mergeMixins(innerParent,mixins);
             }
 
-
-            var _constructor = props.constructor;
-            if (_constructor === Object) {
-                _constructor = function() {
-                    if (this.init) {
-                        return this.init.apply(this, arguments);
-                    }
-                };
-            };
-
             var klassName = props.klassName || "",
                 ctor = new Function(
                     "return function " + klassName + "() {" +
@@ -486,7 +1402,6 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
                 )();
 
 
-            ctor._constructor = _constructor;
             // Populate our constructed prototype object
             ctor.prototype = Object.create(innerParent.prototype);
 
@@ -496,6 +1411,11 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
 
             // And make this class extendable
             ctor.__proto__ = innerParent;
+
+
+            if (!ctor._constructor) {
+                ctor._constructor = _constructor;
+            } 
 
             if (mixins) {
                 ctor.__mixins__ = mixins;
@@ -520,1206 +1440,11 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
 
     var createClass = f1();
 
-
-    // Retrieve all the property names of an object.
-    function allKeys(obj) {
-        if (!isObject(obj)) return [];
-        var keys = [];
-        for (var key in obj) keys.push(key);
-        return keys;
-    }
-
-    function createEvent(type, props) {
-        var e = new CustomEvent(type, props);
-
-        return safeMixin(e, props);
-    }
-    
-    function debounce(fn, wait) {
-        var timeout;
-        return function () {
-            var context = this, args = arguments;
-            var later = function () {
-                timeout = null;
-                fn.apply(context, args);
-            };
-            if (timeout) clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
-    }
-   
-    var delegate = (function() {
-        // boodman/crockford delegation w/ cornford optimization
-        function TMP() {}
-        return function(obj, props) {
-            TMP.prototype = obj;
-            var tmp = new TMP();
-            TMP.prototype = null;
-            if (props) {
-                mixin(tmp, props);
-            }
-            return tmp; // Object
-        };
-    })();
-
-
-    // Retrieve the values of an object's properties.
-    function values(obj) {
-        var keys = _.keys(obj);
-        var length = keys.length;
-        var values = Array(length);
-        for (var i = 0; i < length; i++) {
-            values[i] = obj[keys[i]];
-        }
-        return values;
-    }
-    
-    function clone( /*anything*/ src,checkCloneMethod) {
-        var copy;
-        if (src === undefined || src === null) {
-            copy = src;
-        } else if (checkCloneMethod && src.clone) {
-            copy = src.clone();
-        } else if (isArray(src)) {
-            copy = [];
-            for (var i = 0; i < src.length; i++) {
-                copy.push(clone(src[i]));
-            }
-        } else if (isPlainObject(src)) {
-            copy = {};
-            for (var key in src) {
-                copy[key] = clone(src[key]);
-            }
-        } else {
-            copy = src;
-        }
-
-        return copy;
-
-    }
-
-    function compact(array) {
-        return filter.call(array, function(item) {
-            return item != null;
-        });
-    }
-
-    /*
-     * Converts camel case into dashes.
-     * @param {String} str
-     * @return {String}
-     * @exapmle marginTop -> margin-top
-     */
-    function dasherize(str) {
-        return str.replace(/::/g, '/')
-            .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
-            .replace(/([a-z\d])([A-Z])/g, '$1_$2')
-            .replace(/_/g, '-')
-            .toLowerCase();
-    }
-
-    function deserializeValue(value) {
-        try {
-            return value ?
-                value == "true" ||
-                (value == "false" ? false :
-                    value == "null" ? null :
-                    +value + "" == value ? +value :
-                    /^[\[\{]/.test(value) ? JSON.parse(value) :
-                    value) : value;
-        } catch (e) {
-            return value;
-        }
-    }
-
-    function each(obj, callback) {
-        var length, key, i, undef, value;
-
-        if (obj) {
-            length = obj.length;
-
-            if (length === undef) {
-                // Loop object items
-                for (key in obj) {
-                    if (obj.hasOwnProperty(key)) {
-                        value = obj[key];
-                        if (callback.call(value, key, value) === false) {
-                            break;
-                        }
-                    }
-                }
-            } else {
-                // Loop array items
-                for (i = 0; i < length; i++) {
-                    value = obj[i];
-                    if (callback.call(value, i, value) === false) {
-                        break;
-                    }
-                }
-            }
-        }
-
-        return this;
-    }
-
-    function flatten(array) {
-        if (isArrayLike(array)) {
-            var result = [];
-            for (var i = 0; i < array.length; i++) {
-                var item = array[i];
-                if (isArrayLike(item)) {
-                    for (var j = 0; j < item.length; j++) {
-                        result.push(item[j]);
-                    }
-                } else {
-                    result.push(item);
-                }
-            }
-            return result;
-        } else {
-            return array;
-        }
-        //return array.length > 0 ? concat.apply([], array) : array;
-    }
-
-    function funcArg(context, arg, idx, payload) {
-        return isFunction(arg) ? arg.call(context, idx, payload) : arg;
-    }
-
-    var getAbsoluteUrl = (function() {
-        var a;
-
-        return function(url) {
-            if (!a) a = document.createElement('a');
-            a.href = url;
-
-            return a.href;
-        };
-    })();
-
-    function getQueryParams(url) {
-        var url = url || window.location.href,
-            segs = url.split("?"),
-            params = {};
-
-        if (segs.length > 1) {
-            segs[1].split("&").forEach(function(queryParam) {
-                var nv = queryParam.split('=');
-                params[nv[0]] = nv[1];
-            });
-        }
-        return params;
-    }
-
-    function grep(array, callback) {
-        var out = [];
-
-        each(array, function(i, item) {
-            if (callback(item, i)) {
-                out.push(item);
-            }
-        });
-
-        return out;
-    }
-
-
-    function has(obj, path) {
-        if (!isArray(path)) {
-            return obj != null && hasOwnProperty.call(obj, path);
-        }
-        var length = path.length;
-        for (var i = 0; i < length; i++) {
-            var key = path[i];
-            if (obj == null || !hasOwnProperty.call(obj, key)) {
-                return false;
-            }
-            obj = obj[key];
-        }
-        return !!length;
-    }
-
-    function inArray(item, array) {
-        if (!array) {
-            return -1;
-        }
-        var i;
-
-        if (array.indexOf) {
-            return array.indexOf(item);
-        }
-
-        i = array.length;
-        while (i--) {
-            if (array[i] === item) {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    function inherit(ctor, base) {
-        var f = function() {};
-        f.prototype = base.prototype;
-
-        ctor.prototype = new f();
-    }
-
-    function isArray(object) {
-        return object && object.constructor === Array;
-    }
-
-    function isArrayLike(obj) {
-        return !isString(obj) && !isHtmlNode(obj) && typeof obj.length == 'number' && !isFunction(obj);
-    }
-
-    function isBoolean(obj) {
-        return typeof(obj) === "boolean";
-    }
-
-    function isDocument(obj) {
-        return obj != null && obj.nodeType == obj.DOCUMENT_NODE;
-    }
-
-
-
-  // Perform a deep comparison to check if two objects are equal.
-    function isEqual(a, b) {
-        return eq(a, b);
-    }
-
-    function isFunction(value) {
-        return type(value) == "function";
-    }
-
-    function isObject(obj) {
-        return type(obj) == "object";
-    }
-
-    function isPlainObject(obj) {
-        return isObject(obj) && !isWindow(obj) && Object.getPrototypeOf(obj) == Object.prototype;
-    }
-
-    function isString(obj) {
-        return typeof obj === 'string';
-    }
-
-    function isWindow(obj) {
-        return obj && obj == obj.window;
-    }
-
-    function isDefined(obj) {
-        return typeof obj !== 'undefined';
-    }
-
-    function isHtmlNode(obj) {
-        return obj && (obj instanceof Node);
-    }
-
-    function isInstanceOf( /*Object*/ value, /*Type*/ type) {
-        //Tests whether the value is an instance of a type.
-        if (value === undefined) {
-            return false;
-        } else if (value === null || type == Object) {
-            return true;
-        } else if (typeof value === "number") {
-            return type === Number;
-        } else if (typeof value === "string") {
-            return type === String;
-        } else if (typeof value === "boolean") {
-            return type === Boolean;
-        } else if (typeof value === "string") {
-            return type === String;
-        } else {
-            return (value instanceof type) || (value && value.isInstanceOf ? value.isInstanceOf(type) : false);
-        }
-    }
-
-    function isNumber(obj) {
-        return typeof obj == 'number';
-    }
-
-    function isSameOrigin(href) {
-        if (href) {
-            var origin = location.protocol + '//' + location.hostname;
-            if (location.port) {
-                origin += ':' + location.port;
-            }
-            return href.startsWith(origin);
-        }
-    }
-
-
-    function isEmptyObject(obj) {
-        var name;
-        for (name in obj) {
-            if (obj[name] !== null) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // Returns whether an object has a given set of `key:value` pairs.
-    function isMatch(object, attrs) {
-        var keys = keys(attrs), length = keys.length;
-        if (object == null) return !length;
-        var obj = Object(object);
-        for (var i = 0; i < length; i++) {
-          var key = keys[i];
-          if (attrs[key] !== obj[key] || !(key in obj)) return false;
-        }
-        return true;
-    }    
-
-    // Retrieve the names of an object's own properties.
-    // Delegates to **ECMAScript 5**'s native `Object.keys`.
-    function keys(obj) {
-        if (isObject(obj)) return [];
-        var keys = [];
-        for (var key in obj) if (has(obj, key)) keys.push(key);
-        return keys;
-    }
-
-    function makeArray(obj, offset, startWith) {
-       if (isArrayLike(obj) ) {
-        return (startWith || []).concat(Array.prototype.slice.call(obj, offset || 0));
-      }
-
-      // array of single index
-      return [ obj ];             
-    }
-
-
-
-    function map(elements, callback) {
-        var value, values = [],
-            i, key
-        if (isArrayLike(elements))
-            for (i = 0; i < elements.length; i++) {
-                value = callback.call(elements[i], elements[i], i);
-                if (value != null) values.push(value)
-            }
-        else
-            for (key in elements) {
-                value = callback.call(elements[key], elements[key], key);
-                if (value != null) values.push(value)
-            }
-        return flatten(values)
-    }
-
-    function defer(fn) {
-        if (requestAnimationFrame) {
-            requestAnimationFrame(fn);
-        } else {
-            setTimeoutout(fn);
-        }
-        return this;
-    }
-
-    function noop() {
-    }
-
-    function proxy(fn, context) {
-        var args = (2 in arguments) && slice.call(arguments, 2)
-        if (isFunction(fn)) {
-            var proxyFn = function() {
-                return fn.apply(context, args ? args.concat(slice.call(arguments)) : arguments);
-            }
-            return proxyFn;
-        } else if (isString(context)) {
-            if (args) {
-                args.unshift(fn[context], fn)
-                return proxy.apply(null, args)
-            } else {
-                return proxy(fn[context], fn);
-            }
-        } else {
-            throw new TypeError("expected function");
-        }
-    }
-
-
-    function toPixel(value) {
-        // style values can be floats, client code may want
-        // to round for integer pixels.
-        return parseFloat(value) || 0;
-    }
-
-    var type = (function() {
-        var class2type = {};
-
-        // Populate the class2type map
-        each("Boolean Number String Function Array Date RegExp Object Error".split(" "), function(i, name) {
-            class2type["[object " + name + "]"] = name.toLowerCase();
-        });
-
-        return function type(obj) {
-            return obj == null ? String(obj) :
-                class2type[toString.call(obj)] || "object";
-        };
-    })();
-
-    function trim(str) {
-        return str == null ? "" : String.prototype.trim.call(str);
-    }
-
-    function removeItem(items, item) {
-        if (isArray(items)) {
-            var idx = items.indexOf(item);
-            if (idx != -1) {
-                items.splice(idx, 1);
-            }
-        } else if (isPlainObject(items)) {
-            for (var key in items) {
-                if (items[key] == item) {
-                    delete items[key];
-                    break;
-                }
-            }
-        }
-
-        return this;
-    }
-
-    function _mixin(target, source, deep, safe) {
-        for (var key in source) {
-            //if (!source.hasOwnProperty(key)) {
-            //    continue;
-            //}
-            if (safe && target[key] !== undefined) {
-                continue;
-            }
-            if (deep && (isPlainObject(source[key]) || isArray(source[key]))) {
-                if (isPlainObject(source[key]) && !isPlainObject(target[key])) {
-                    target[key] = {};
-                }
-                if (isArray(source[key]) && !isArray(target[key])) {
-                    target[key] = [];
-                }
-                _mixin(target[key], source[key], deep, safe);
-            } else if (source[key] !== undefined) {
-                target[key] = source[key]
-            }
-        }
-        return target;
-    }
-
-    function _parseMixinArgs(args) {
-        var params = slice.call(arguments, 0),
-            target = params.shift(),
-            deep = false;
-        if (isBoolean(params[params.length - 1])) {
-            deep = params.pop();
-        }
-
-        return {
-            target: target,
-            sources: params,
-            deep: deep
-        };
-    }
-
-    function mixin() {
-        var args = _parseMixinArgs.apply(this, arguments);
-
-        args.sources.forEach(function(source) {
-            _mixin(args.target, source, args.deep, false);
-        });
-        return args.target;
-    }
-
-    function result(obj, path, fallback) {
-        if (!isArray(path)) {
-            path = [path]
-        };
-        var length = path.length;
-        if (!length) {
-          return isFunction(fallback) ? fallback.call(obj) : fallback;
-        }
-        for (var i = 0; i < length; i++) {
-          var prop = obj == null ? void 0 : obj[path[i]];
-          if (prop === void 0) {
-            prop = fallback;
-            i = length; // Ensure we don't continue iterating.
-          }
-          obj = isFunction(prop) ? prop.call(obj) : prop;
-        }
-
-        return obj;
-    }
-
-    function safeMixin() {
-        var args = _parseMixinArgs.apply(this, arguments);
-
-        args.sources.forEach(function(source) {
-            _mixin(args.target, source, args.deep, true);
-        });
-        return args.target;
-    }
-
-    function substitute( /*String*/ template,
-        /*Object|Array*/
-        map,
-        /*Function?*/
-        transform,
-        /*Object?*/
-        thisObject) {
-        // summary:
-        //    Performs parameterized substitutions on a string. Throws an
-        //    exception if any parameter is unmatched.
-        // template:
-        //    a string with expressions in the form `${key}` to be replaced or
-        //    `${key:format}` which specifies a format function. keys are case-sensitive.
-        // map:
-        //    hash to search for substitutions
-        // transform:
-        //    a function to process all parameters before substitution takes
-
-
-        thisObject = thisObject || window;
-        transform = transform ?
-            proxy(thisObject, transform) : function(v) {
-                return v;
-            };
-
-        function getObject(key, map) {
-            if (key.match(/\./)) {
-                var retVal,
-                    getValue = function(keys, obj) {
-                        var _k = keys.pop();
-                        if (_k) {
-                            if (!obj[_k]) return null;
-                            return getValue(keys, retVal = obj[_k]);
-                        } else {
-                            return retVal;
-                        }
-                    };
-                return getValue(key.split(".").reverse(), map);
-            } else {
-                return map[key];
-            }
-        }
-
-        return template.replace(/\$\{([^\s\:\}]+)(?:\:([^\s\:\}]+))?\}/g,
-            function(match, key, format) {
-                var value = getObject(key, map);
-                if (format) {
-                    value = getObject(format, thisObject).call(thisObject, value, key);
-                }
-                return transform(value, key).toString();
-            }); // String
-    }
-
-    var _uid = 1;
-
-    function uid(obj) {
-        return obj._uid || (obj._uid = _uid++);
-    }
-
-    function uniq(array) {
-        return filter.call(array, function(item, idx) {
-            return array.indexOf(item) == idx;
-        })
-    }
-
-    var idCounter = 0;
-    function uniqueId (prefix) {
-        var id = ++idCounter + '';
-        return prefix ? prefix + id : id;
-    }
-
-    var Deferred = function() {
-        var self = this,
-            p = this.promise = new Promise(function(resolve, reject) {
-                self._resolve = resolve;
-                self._reject = reject;
-            }),
-           added = {
-                state : function() {
-                    if (self.isResolved()) {
-                        return 'resolved';
-                    }
-                    if (self.isRejected()) {
-                        return 'rejected';
-                    }
-                    return 'pending';
-                },
-                then : function(onResolved,onRejected,onProgress) {
-                    if (onProgress) {
-                        this.progress(onProgress);
-                    }
-                    return mixin(Promise.prototype.then.call(this,
-                            onResolved && function(args) {
-                                if (args && args.__ctx__ !== undefined) {
-                                    return onResolved.apply(args.__ctx__,args);
-                                } else {
-                                    return onResolved(args);
-                                }
-                            },
-                            onRejected && function(args){
-                                if (args && args.__ctx__ !== undefined) {
-                                    return onRejected.apply(args.__ctx__,args);
-                                } else {
-                                    return onRejected(args);
-                                }
-                            }),added);
-                },
-                always: function(handler) {
-                    //this.done(handler);
-                    //this.fail(handler);
-                    this.then(handler,handler);
-                    return this;
-                },
-                done : function(handler) {
-                    return this.then(handler);
-                },
-                fail : function(handler) { 
-                    //return mixin(Promise.prototype.catch.call(this,handler),added);
-                    return this.then(null,handler);
-                }, 
-                progress : function(handler) {
-                    self[PGLISTENERS].push(handler);
-                    return this;
-                }
-
-            };
-
-        added.pipe = added.then;
-        mixin(p,added);
-
-        this[PGLISTENERS] = [];
-
-        //this.resolve = Deferred.prototype.resolve.bind(this);
-        //this.reject = Deferred.prototype.reject.bind(this);
-        //this.progress = Deferred.prototype.progress.bind(this);
-
-    };
-
-    Deferred.prototype.resolve = function(value) {
-        var args = slice.call(arguments);
-        return this.resolveWith(null,args);
-    };
-
-    Deferred.prototype.resolveWith = function(context,args) {
-        args = args ? makeArray(args) : []; 
-        args.__ctx__ = context;
-        this._resolve(args);
-        this._resolved = true;
-        return this;
-    };
-
-    Deferred.prototype.progress = function(value) {
-        try {
-          return this[PGLISTENERS].forEach(function (listener) {
-            return listener(value);
-          });
-        } catch (error) {
-          this.reject(error);
-        }
-        return this;
-    };
-
-    Deferred.prototype.reject = function(reason) {
-        var args = slice.call(arguments);
-        return this.rejectWith(null,args);
-    };
-
-    Deferred.prototype.rejectWith = function(context,args) {
-        args = args ? makeArray(args) : []; 
-        args.__ctx__ = context;
-        this._reject(args);
-        this._rejected = true;
-        return this;
-    };
-
-    Deferred.prototype.isResolved = function() {
-        return !!this._resolved;
-    };
-
-    Deferred.prototype.isRejected = function() {
-        return !!this._rejected;
-    };
-
-    Deferred.prototype.then = function(callback, errback, progback) {
-        var p = result(this,"promise");
-        return p.then(callback, errback, progback);
-    };
-
-    Deferred.prototype.done  = Deferred.prototype.then;
-
-    Deferred.all = function(array) {
-        return Promise.all(array);
-    };
-
-    Deferred.first = function(array) {
-        return Promise.race(array);
-    };
-
-
-    Deferred.when = function(valueOrPromise, callback, errback, progback) {
-        var receivedPromise = valueOrPromise && typeof valueOrPromise.then === "function";
-        var nativePromise = receivedPromise && valueOrPromise instanceof Promise;
-
-        if (!receivedPromise) {
-            if (arguments.length > 1) {
-                return callback ? callback(valueOrPromise) : valueOrPromise;
-            } else {
-                return new Deferred().resolve(valueOrPromise);
-            }
-//        } else if (!nativePromise) {
-//            var deferred = new Deferred(valueOrPromise.cancel);
-//            valueOrPromise.then(deferred.resolve, deferred.reject, deferred.progress);
-//            valueOrPromise = deferred.promise;
-        }
-
-        if (callback || errback || progback) {
-            return valueOrPromise.then(callback, errback, progback);
-        }
-        return valueOrPromise;
-    };
-
-    Deferred.reject = function(err) {
-        var d = new Deferred();
-        d.reject(err);
-        return d.promise;
-    };
-
-    Deferred.resolve = function(data) {
-        var d = new Deferred();
-        d.resolve(data);
-        return d.promise;
-    };
-
-    Deferred.immediate = Deferred.resolve;
-
-    var Evented = createClass({
-        on: function(events, selector, data, callback, ctx, /*used internally*/ one) {
-            var self = this,
-                _hub = this._hub || (this._hub = {});
-
-            if (isPlainObject(events)) {
-                ctx = callback;
-                each(events, function(type, fn) {
-                    self.on(type, selector, data, fn, ctx, one);
-                });
-                return this;
-            }
-
-            if (!isString(selector) && !isFunction(callback)) {
-                ctx = callback;
-                callback = data;
-                data = selector;
-                selector = undefined;
-            }
-
-            if (isFunction(data)) {
-                ctx = callback;
-                callback = data;
-                data = null;
-            }
-
-            if (isString(events)) {
-                events = events.split(/\s/)
-            }
-
-            events.forEach(function(name) {
-                (_hub[name] || (_hub[name] = [])).push({
-                    fn: callback,
-                    selector: selector,
-                    data: data,
-                    ctx: ctx,
-                    one: one
-                });
-            });
-
-            return this;
-        },
-
-        one: function(events, selector, data, callback, ctx) {
-            return this.on(events, selector, data, callback, ctx, 1);
-        },
-
-        trigger: function(e /*,argument list*/ ) {
-            if (!this._hub) {
-                return this;
-            }
-
-            var self = this;
-
-            if (isString(e)) {
-                e = new CustomEvent(e);
-            }
-
-            Object.defineProperty(e,"target",{
-                value : this
-            });
-
-            var args = slice.call(arguments, 1);
-            if (isDefined(args)) {
-                args = [e].concat(args);
-            } else {
-                args = [e];
-            }
-            [e.type || e.name, "all"].forEach(function(eventName) {
-                var listeners = self._hub[eventName];
-                if (!listeners) {
-                    return;
-                }
-
-                var len = listeners.length,
-                    reCompact = false;
-
-                for (var i = 0; i < len; i++) {
-                    var listener = listeners[i];
-                    if (e.data) {
-                        if (listener.data) {
-                            e.data = mixin({}, listener.data, e.data);
-                        }
-                    } else {
-                        e.data = listener.data || null;
-                    }
-                    listener.fn.apply(listener.ctx, args);
-                    if (listener.one) {
-                        listeners[i] = null;
-                        reCompact = true;
-                    }
-                }
-
-                if (reCompact) {
-                    self._hub[eventName] = compact(listeners);
-                }
-
-            });
-            return this;
-        },
-
-        listened: function(event) {
-            var evtArr = ((this._hub || (this._events = {}))[event] || []);
-            return evtArr.length > 0;
-        },
-
-        listenTo: function(obj, event, callback, /*used internally*/ one) {
-            if (!obj) {
-                return this;
-            }
-
-            // Bind callbacks on obj,
-            if (isString(callback)) {
-                callback = this[callback];
-            }
-
-            if (one) {
-                obj.one(event, callback, this);
-            } else {
-                obj.on(event, callback, this);
-            }
-
-            //keep track of them on listening.
-            var listeningTo = this._listeningTo || (this._listeningTo = []),
-                listening;
-
-            for (var i = 0; i < listeningTo.length; i++) {
-                if (listeningTo[i].obj == obj) {
-                    listening = listeningTo[i];
-                    break;
-                }
-            }
-            if (!listening) {
-                listeningTo.push(
-                    listening = {
-                        obj: obj,
-                        events: {}
-                    }
-                );
-            }
-            var listeningEvents = listening.events,
-                listeningEvent = listeningEvents[event] = listeningEvents[event] || [];
-            if (listeningEvent.indexOf(callback) == -1) {
-                listeningEvent.push(callback);
-            }
-
-            return this;
-        },
-
-        listenToOnce: function(obj, event, callback) {
-            return this.listenTo(obj, event, callback, 1);
-        },
-
-        off: function(events, callback) {
-            var _hub = this._hub || (this._hub = {});
-            if (isString(events)) {
-                events = events.split(/\s/)
-            }
-
-            events.forEach(function(name) {
-                var evts = _hub[name];
-                var liveEvents = [];
-
-                if (evts && callback) {
-                    for (var i = 0, len = evts.length; i < len; i++) {
-                        if (evts[i].fn !== callback && evts[i].fn._ !== callback)
-                            liveEvents.push(evts[i]);
-                    }
-                }
-
-                if (liveEvents.length) {
-                    _hub[name] = liveEvents;
-                } else {
-                    delete _hub[name];
-                }
-            });
-
-            return this;
-        },
-        unlistenTo: function(obj, event, callback) {
-            var listeningTo = this._listeningTo;
-            if (!listeningTo) {
-                return this;
-            }
-            for (var i = 0; i < listeningTo.length; i++) {
-                var listening = listeningTo[i];
-
-                if (obj && obj != listening.obj) {
-                    continue;
-                }
-
-                var listeningEvents = listening.events;
-                for (var eventName in listeningEvents) {
-                    if (event && event != eventName) {
-                        continue;
-                    }
-
-                    var listeningEvent = listeningEvents[eventName];
-
-                    for (var j = 0; j < listeningEvent.length; j++) {
-                        if (!callback || callback == listeningEvent[i]) {
-                            listening.obj.off(eventName, listeningEvent[i], this);
-                            listeningEvent[i] = null;
-                        }
-                    }
-
-                    listeningEvent = listeningEvents[eventName] = compact(listeningEvent);
-
-                    if (isEmptyObject(listeningEvent)) {
-                        listeningEvents[eventName] = null;
-                    }
-
-                }
-
-                if (isEmptyObject(listeningEvents)) {
-                    listeningTo[i] = null;
-                }
-            }
-
-            listeningTo = this._listeningTo = compact(listeningTo);
-            if (isEmptyObject(listeningTo)) {
-                this._listeningTo = null;
-            }
-
-            return this;
-        }
-    });
-
-    var Stateful = Evented.inherit({
-        init : function(attributes, options) {
-            var attrs = attributes || {};
-            options || (options = {});
-            this.cid = uniqueId(this.cidPrefix);
-            this.attributes = {};
-            if (options.collection) this.collection = options.collection;
-            if (options.parse) attrs = this.parse(attrs, options) || {};
-            var defaults = result(this, 'defaults');
-            attrs = mixin({}, defaults, attrs);
-            this.set(attrs, options);
-            this.changed = {};
-        },
-
-        // A hash of attributes whose current and previous value differ.
-        changed: null,
-
-        // The value returned during the last failed validation.
-        validationError: null,
-
-        // The default name for the JSON `id` attribute is `"id"`. MongoDB and
-        // CouchDB users may want to set this to `"_id"`.
-        idAttribute: 'id',
-
-        // The prefix is used to create the client id which is used to identify models locally.
-        // You may want to override this if you're experiencing name clashes with model ids.
-        cidPrefix: 'c',
-
-
-        // Return a copy of the model's `attributes` object.
-        toJSON: function(options) {
-          return clone(this.attributes);
-        },
-
-
-        // Get the value of an attribute.
-        get: function(attr) {
-          return this.attributes[attr];
-        },
-
-        // Returns `true` if the attribute contains a value that is not null
-        // or undefined.
-        has: function(attr) {
-          return this.get(attr) != null;
-        },
-
-        // Set a hash of model attributes on the object, firing `"change"`. This is
-        // the core primitive operation of a model, updating the data and notifying
-        // anyone who needs to know about the change in state. The heart of the beast.
-        set: function(key, val, options) {
-          if (key == null) return this;
-
-          // Handle both `"key", value` and `{key: value}` -style arguments.
-          var attrs;
-          if (typeof key === 'object') {
-            attrs = key;
-            options = val;
-          } else {
-            (attrs = {})[key] = val;
-          }
-
-          options || (options = {});
-
-          // Run validation.
-          if (!this._validate(attrs, options)) return false;
-
-          // Extract attributes and options.
-          var unset      = options.unset;
-          var silent     = options.silent;
-          var changes    = [];
-          var changing   = this._changing;
-          this._changing = true;
-
-          if (!changing) {
-            this._previousAttributes = clone(this.attributes);
-            this.changed = {};
-          }
-
-          var current = this.attributes;
-          var changed = this.changed;
-          var prev    = this._previousAttributes;
-
-          // For each `set` attribute, update or delete the current value.
-          for (var attr in attrs) {
-            val = attrs[attr];
-            if (!isEqual(current[attr], val)) changes.push(attr);
-            if (!isEqual(prev[attr], val)) {
-              changed[attr] = val;
-            } else {
-              delete changed[attr];
-            }
-            unset ? delete current[attr] : current[attr] = val;
-          }
-
-          // Update the `id`.
-          if (this.idAttribute in attrs) this.id = this.get(this.idAttribute);
-
-          // Trigger all relevant attribute changes.
-          if (!silent) {
-            if (changes.length) this._pending = options;
-            for (var i = 0; i < changes.length; i++) {
-              this.trigger('change:' + changes[i], this, current[changes[i]], options);
-            }
-          }
-
-          // You might be wondering why there's a `while` loop here. Changes can
-          // be recursively nested within `"change"` events.
-          if (changing) return this;
-          if (!silent) {
-            while (this._pending) {
-              options = this._pending;
-              this._pending = false;
-              this.trigger('change', this, options);
-            }
-          }
-          this._pending = false;
-          this._changing = false;
-          return this;
-        },
-
-        // Remove an attribute from the model, firing `"change"`. `unset` is a noop
-        // if the attribute doesn't exist.
-        unset: function(attr, options) {
-          return this.set(attr, void 0, mixin({}, options, {unset: true}));
-        },
-
-        // Clear all attributes on the model, firing `"change"`.
-        clear: function(options) {
-          var attrs = {};
-          for (var key in this.attributes) attrs[key] = void 0;
-          return this.set(attrs, mixin({}, options, {unset: true}));
-        },
-
-        // Determine if the model has changed since the last `"change"` event.
-        // If you specify an attribute name, determine if that attribute has changed.
-        hasChanged: function(attr) {
-          if (attr == null) return !isEmptyObject(this.changed);
-          return this.changed[attr] !== undefined;
-        },
-
-        // Return an object containing all the attributes that have changed, or
-        // false if there are no changed attributes. Useful for determining what
-        // parts of a view need to be updated and/or what attributes need to be
-        // persisted to the server. Unset attributes will be set to undefined.
-        // You can also pass an attributes object to diff against the model,
-        // determining if there *would be* a change.
-        changedAttributes: function(diff) {
-          if (!diff) return this.hasChanged() ? clone(this.changed) : false;
-          var old = this._changing ? this._previousAttributes : this.attributes;
-          var changed = {};
-          for (var attr in diff) {
-            var val = diff[attr];
-            if (isEqual(old[attr], val)) continue;
-            changed[attr] = val;
-          }
-          return !isEmptyObject(changed) ? changed : false;
-        },
-
-        // Get the previous value of an attribute, recorded at the time the last
-        // `"change"` event was fired.
-        previous: function(attr) {
-          if (attr == null || !this._previousAttributes) return null;
-          return this._previousAttributes[attr];
-        },
-
-        // Get all of the attributes of the model at the time of the previous
-        // `"change"` event.
-        previousAttributes: function() {
-          return clone(this._previousAttributes);
-        },
-
-        // Create a new model with identical attributes to this one.
-        clone: function() {
-          return new this.constructor(this.attributes);
-        },
-
-        // A model is new if it has never been saved to the server, and lacks an id.
-        isNew: function() {
-          return !this.has(this.idAttribute);
-        },
-
-        // Check if the model is currently in a valid state.
-        isValid: function(options) {
-          return this._validate({}, mixin({}, options, {validate: true}));
-        },
-
-        // Run validation against the next complete set of model attributes,
-        // returning `true` if all is well. Otherwise, fire an `"invalid"` event.
-        _validate: function(attrs, options) {
-          if (!options.validate || !this.validate) return true;
-          attrs = mixin({}, this.attributes, attrs);
-          var error = this.validationError = this.validate(attrs, options) || null;
-          if (!error) return true;
-          this.trigger('invalid', this, error, mixin(options, {validationError: error}));
-          return false;
-        }
-    });
-
+    return createClass;
+});
+define('skylark-langx/ArrayStore',[
+    "./klass"
+],function(klass){
     var SimpleQueryEngine = function(query, options){
         // summary:
         //      Simple query engine that matches using filter functions, named filter
@@ -1936,55 +1661,7 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
         return results; // Object
     };
 
-    var async = {
-        parallel : function(arr,args,ctx) {
-            var rets = [];
-            ctx = ctx || null;
-            args = args || [];
-
-            each(arr,function(i,func){
-                rets.push(func.apply(ctx,args));
-            });
-
-            return Deferred.all(rets);
-        },
-
-        series : function(arr,args,ctx) {
-            var rets = [],
-                d = new Deferred(),
-                p = d.promise;
-
-            ctx = ctx || null;
-            args = args || [];
-
-            d.resolve();
-            each(arr,function(i,func){
-                p = p.then(function(){
-                    return func.apply(ctx,args);
-                });
-                rets.push(p);
-            });
-
-            return Deferred.all(rets);
-        },
-
-        waterful : function(arr,args,ctx) {
-            var d = new Deferred(),
-                p = d.promise;
-
-            ctx = ctx || null;
-            args = args || [];
-
-            d.resolveWith(ctx,args);
-
-            each(arr,function(i,func){
-                p = p.then(func);
-            });
-            return p;
-        }
-    };
-
-    var ArrayStore = createClass({
+    var ArrayStore = klass({
         "klassName": "ArrayStore",
 
         "queryEngine": SimpleQueryEngine,
@@ -2107,6 +1784,1309 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
 
     });
 
+	return ArrayStore;
+});
+define('skylark-langx/aspect',[
+],function(){
+
+  var undefined, nextId = 0;
+    function advise(dispatcher, type, advice, receiveArguments){
+        var previous = dispatcher[type];
+        var around = type == "around";
+        var signal;
+        if(around){
+            var advised = advice(function(){
+                return previous.advice(this, arguments);
+            });
+            signal = {
+                remove: function(){
+                    if(advised){
+                        advised = dispatcher = advice = null;
+                    }
+                },
+                advice: function(target, args){
+                    return advised ?
+                        advised.apply(target, args) :  // called the advised function
+                        previous.advice(target, args); // cancelled, skip to next one
+                }
+            };
+        }else{
+            // create the remove handler
+            signal = {
+                remove: function(){
+                    if(signal.advice){
+                        var previous = signal.previous;
+                        var next = signal.next;
+                        if(!next && !previous){
+                            delete dispatcher[type];
+                        }else{
+                            if(previous){
+                                previous.next = next;
+                            }else{
+                                dispatcher[type] = next;
+                            }
+                            if(next){
+                                next.previous = previous;
+                            }
+                        }
+
+                        // remove the advice to signal that this signal has been removed
+                        dispatcher = advice = signal.advice = null;
+                    }
+                },
+                id: nextId++,
+                advice: advice,
+                receiveArguments: receiveArguments
+            };
+        }
+        if(previous && !around){
+            if(type == "after"){
+                // add the listener to the end of the list
+                // note that we had to change this loop a little bit to workaround a bizarre IE10 JIT bug
+                while(previous.next && (previous = previous.next)){}
+                previous.next = signal;
+                signal.previous = previous;
+            }else if(type == "before"){
+                // add to beginning
+                dispatcher[type] = signal;
+                signal.next = previous;
+                previous.previous = signal;
+            }
+        }else{
+            // around or first one just replaces
+            dispatcher[type] = signal;
+        }
+        return signal;
+    }
+    function aspect(type){
+        return function(target, methodName, advice, receiveArguments){
+            var existing = target[methodName], dispatcher;
+            if(!existing || existing.target != target){
+                // no dispatcher in place
+                target[methodName] = dispatcher = function(){
+                    var executionId = nextId;
+                    // before advice
+                    var args = arguments;
+                    var before = dispatcher.before;
+                    while(before){
+                        args = before.advice.apply(this, args) || args;
+                        before = before.next;
+                    }
+                    // around advice
+                    if(dispatcher.around){
+                        var results = dispatcher.around.advice(this, args);
+                    }
+                    // after advice
+                    var after = dispatcher.after;
+                    while(after && after.id < executionId){
+                        if(after.receiveArguments){
+                            var newResults = after.advice.apply(this, args);
+                            // change the return value only if a new value was returned
+                            results = newResults === undefined ? results : newResults;
+                        }else{
+                            results = after.advice.call(this, results, args);
+                        }
+                        after = after.next;
+                    }
+                    return results;
+                };
+                if(existing){
+                    dispatcher.around = {advice: function(target, args){
+                        return existing.apply(target, args);
+                    }};
+                }
+                dispatcher.target = target;
+            }
+            var results = advise((dispatcher || existing), type, advice, receiveArguments);
+            advice = null;
+            return results;
+        };
+    }
+
+    return {
+        after: aspect("after"),
+ 
+        around: aspect("around"),
+        
+        before: aspect("before")
+    };
+});
+define('skylark-langx/funcs',[
+    "./objects",
+	"./types"
+],function(objects,types){
+	var mixin = objects.mixin,
+        slice = Array.prototype.slice,
+        isFunction = types.isFunction,
+        isString = types.isString;
+
+    function defer(fn) {
+        if (requestAnimationFrame) {
+            requestAnimationFrame(fn);
+        } else {
+            setTimeoutout(fn);
+        }
+        return this;
+    }
+
+    function noop() {
+    }
+
+    function proxy(fn, context) {
+        var args = (2 in arguments) && slice.call(arguments, 2)
+        if (isFunction(fn)) {
+            var proxyFn = function() {
+                return fn.apply(context, args ? args.concat(slice.call(arguments)) : arguments);
+            }
+            return proxyFn;
+        } else if (isString(context)) {
+            if (args) {
+                args.unshift(fn[context], fn)
+                return proxy.apply(null, args)
+            } else {
+                return proxy(fn[context], fn);
+            }
+        } else {
+            throw new TypeError("expected function");
+        }
+    }
+
+    function debounce(fn, wait) {
+        var timeout;
+        return function () {
+            var context = this, args = arguments;
+            var later = function () {
+                timeout = null;
+                fn.apply(context, args);
+            };
+            if (timeout) clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+   
+    var delegate = (function() {
+        // boodman/crockford delegation w/ cornford optimization
+        function TMP() {}
+        return function(obj, props) {
+            TMP.prototype = obj;
+            var tmp = new TMP();
+            TMP.prototype = null;
+            if (props) {
+                mixin(tmp, props);
+            }
+            return tmp; // Object
+        };
+    })();
+
+  var templateSettings = {
+    evaluate: /<%([\s\S]+?)%>/g,
+    interpolate: /<%=([\s\S]+?)%>/g,
+    escape: /<%-([\s\S]+?)%>/g
+  };
+
+
+  function template(text, settings, oldSettings) {
+    if (!settings && oldSettings) settings = oldSettings;
+    settings = objects.defaults({}, settings,templateSettings);
+
+    // Combine delimiters into one regular expression via alternation.
+    var matcher = RegExp([
+      (settings.escape || noMatch).source,
+      (settings.interpolate || noMatch).source,
+      (settings.evaluate || noMatch).source
+    ].join('|') + '|$', 'g');
+
+    // Compile the template source, escaping string literals appropriately.
+    var index = 0;
+    var source = "__p+='";
+    text.replace(matcher, function(match, escape, interpolate, evaluate, offset) {
+      source += text.slice(index, offset).replace(escapeRegExp, escapeChar);
+      index = offset + match.length;
+
+      if (escape) {
+        source += "'+\n((__t=(" + escape + "))==null?'':_.escape(__t))+\n'";
+      } else if (interpolate) {
+        source += "'+\n((__t=(" + interpolate + "))==null?'':__t)+\n'";
+      } else if (evaluate) {
+        source += "';\n" + evaluate + "\n__p+='";
+      }
+
+      // Adobe VMs need the match returned to produce the correct offset.
+      return match;
+    });
+    source += "';\n";
+
+    // If a variable is not specified, place data values in local scope.
+    if (!settings.variable) source = 'with(obj||{}){\n' + source + '}\n';
+
+    source = "var __t,__p='',__j=Array.prototype.join," +
+      "print=function(){__p+=__j.call(arguments,'');};\n" +
+      source + 'return __p;\n';
+
+    var render;
+    try {
+      render = new Function(settings.variable || 'obj', '_', source);
+    } catch (e) {
+      e.source = source;
+      throw e;
+    }
+
+    var template = function(data) {
+      return render.call(this, data, _);
+    };
+
+    // Provide the compiled source as a convenience for precompilation.
+    var argument = settings.variable || 'obj';
+    template.source = 'function(' + argument + '){\n' + source + '}';
+
+    return template;
+  };
+
+    return {
+        debounce: debounce,
+
+        delegate: delegate,
+
+        defer: defer,
+
+        noop : noop,
+
+        proxy: proxy,
+
+        returnTrue: function() {
+            return true;
+        },
+
+        returnFalse: function() {
+            return false;
+        },
+
+        templateSettings : templateSettings,
+        template : template
+    };
+});
+define('skylark-langx/Deferred',[
+    "./arrays",
+	"./funcs",
+    "./objects"
+],function(arrays,funcs,objects){
+    "use strict";
+    
+    var  PGLISTENERS = Symbol ? Symbol() : '__pglisteners',
+         PGNOTIFIES = Symbol ? Symbol() : '__pgnotifies';
+
+    var slice = Array.prototype.slice,
+        proxy = funcs.proxy,
+        makeArray = arrays.makeArray,
+        result = objects.result,
+        mixin = objects.mixin;
+
+    mixin(Promise.prototype,{
+        always: function(handler) {
+            //this.done(handler);
+            //this.fail(handler);
+            this.then(handler,handler);
+            return this;
+        },
+        done : function() {
+            for (var i = 0;i<arguments.length;i++) {
+                this.then(arguments[i]);
+            }
+            return this;
+        },
+        fail : function(handler) { 
+            //return mixin(Promise.prototype.catch.call(this,handler),added);
+            //return this.then(null,handler);
+            this.catch(handler);
+            return this;
+         }
+    });
+
+
+    var Deferred = function() {
+        var self = this,
+            p = this.promise = new Promise(function(resolve, reject) {
+                self._resolve = resolve;
+                self._reject = reject;
+            });
+
+        wrapPromise(p,self);
+
+        this[PGLISTENERS] = [];
+        this[PGNOTIFIES] = [];
+
+        //this.resolve = Deferred.prototype.resolve.bind(this);
+        //this.reject = Deferred.prototype.reject.bind(this);
+        //this.progress = Deferred.prototype.progress.bind(this);
+
+    };
+
+    function wrapPromise(p,d) {
+        var   added = {
+                state : function() {
+                    if (d.isResolved()) {
+                        return 'resolved';
+                    }
+                    if (d.isRejected()) {
+                        return 'rejected';
+                    }
+                    return 'pending';
+                },
+                then : function(onResolved,onRejected,onProgress) {
+                    if (onProgress) {
+                        this.progress(onProgress);
+                    }
+                    return wrapPromise(Promise.prototype.then.call(this,
+                            onResolved && function(args) {
+                                if (args && args.__ctx__ !== undefined) {
+                                    return onResolved.apply(args.__ctx__,args);
+                                } else {
+                                    return onResolved(args);
+                                }
+                            },
+                            onRejected && function(args){
+                                if (args && args.__ctx__ !== undefined) {
+                                    return onRejected.apply(args.__ctx__,args);
+                                } else {
+                                    return onRejected(args);
+                                }
+                            }));
+                },
+                progress : function(handler) {
+                    d[PGNOTIFIES].forEach(function (value) {
+                        handler(value);
+                    });
+                    d[PGLISTENERS].push(handler);
+                    return this;
+                }
+
+            };
+
+        added.pipe = added.then;
+        return mixin(p,added);
+
+    }
+
+    Deferred.prototype.resolve = function(value) {
+        var args = slice.call(arguments);
+        return this.resolveWith(null,args);
+    };
+
+    Deferred.prototype.resolveWith = function(context,args) {
+        args = args ? makeArray(args) : []; 
+        args.__ctx__ = context;
+        this._resolve(args);
+        this._resolved = true;
+        return this;
+    };
+
+    Deferred.prototype.notify = function(value) {
+        try {
+            this[PGNOTIFIES].push(value);
+
+            return this[PGLISTENERS].forEach(function (listener) {
+                return listener(value);
+            });
+        } catch (error) {
+          this.reject(error);
+        }
+        return this;
+    };
+
+    Deferred.prototype.reject = function(reason) {
+        var args = slice.call(arguments);
+        return this.rejectWith(null,args);
+    };
+
+    Deferred.prototype.rejectWith = function(context,args) {
+        args = args ? makeArray(args) : []; 
+        args.__ctx__ = context;
+        this._reject(args);
+        this._rejected = true;
+        return this;
+    };
+
+    Deferred.prototype.isResolved = function() {
+        return !!this._resolved;
+    };
+
+    Deferred.prototype.isRejected = function() {
+        return !!this._rejected;
+    };
+
+    Deferred.prototype.then = function(callback, errback, progback) {
+        var p = result(this,"promise");
+        return p.then(callback, errback, progback);
+    };
+
+    Deferred.prototype.progress = function(progback){
+        var p = result(this,"promise");
+        return p.progress(progback);
+    };
+   
+    Deferred.prototype.catch = function(errback) {
+        var p = result(this,"promise");
+        return p.catch(errback);
+    };
+
+
+    Deferred.prototype.done  = function() {
+        var p = result(this,"promise");
+        return p.done.apply(p,arguments);
+    };
+
+    Deferred.prototype.fail = function(errback) {
+        var p = result(this,"promise");
+        return p.fail(errback);
+    };
+
+
+    Deferred.all = function(array) {
+        //return wrapPromise(Promise.all(array));
+        var d = new Deferred();
+        Promise.all(array).then(d.resolve.bind(d),d.reject.bind(d));
+        return result(d,"promise");
+    };
+
+    Deferred.first = function(array) {
+        return wrapPromise(Promise.race(array));
+    };
+
+
+    Deferred.when = function(valueOrPromise, callback, errback, progback) {
+        var receivedPromise = valueOrPromise && typeof valueOrPromise.then === "function";
+        var nativePromise = receivedPromise && valueOrPromise instanceof Promise;
+
+        if (!receivedPromise) {
+            if (arguments.length > 1) {
+                return callback ? callback(valueOrPromise) : valueOrPromise;
+            } else {
+                return new Deferred().resolve(valueOrPromise);
+            }
+        } else if (!nativePromise) {
+            var deferred = new Deferred(valueOrPromise.cancel);
+            valueOrPromise.then(proxy(deferred.resolve,deferred), proxy(deferred.reject,deferred), deferred.notify);
+            valueOrPromise = deferred.promise;
+        }
+
+        if (callback || errback || progback) {
+            return valueOrPromise.then(callback, errback, progback);
+        }
+        return valueOrPromise;
+    };
+
+    Deferred.reject = function(err) {
+        var d = new Deferred();
+        d.reject(err);
+        return d.promise;
+    };
+
+    Deferred.resolve = function(data) {
+        var d = new Deferred();
+        d.resolve.apply(d,arguments);
+        return d.promise;
+    };
+
+    Deferred.immediate = Deferred.resolve;
+
+    return Deferred;
+});
+define('skylark-langx/async',[
+    "./Deferred",
+    "./objects"
+],function(Deferred,objects){
+    var each = objects.each;
+    
+    var async = {
+        parallel : function(arr,args,ctx) {
+            var rets = [];
+            ctx = ctx || null;
+            args = args || [];
+
+            each(arr,function(i,func){
+                rets.push(func.apply(ctx,args));
+            });
+
+            return Deferred.all(rets);
+        },
+
+        series : function(arr,args,ctx) {
+            var rets = [],
+                d = new Deferred(),
+                p = d.promise;
+
+            ctx = ctx || null;
+            args = args || [];
+
+            d.resolve();
+            each(arr,function(i,func){
+                p = p.then(function(){
+                    return func.apply(ctx,args);
+                });
+                rets.push(p);
+            });
+
+            return Deferred.all(rets);
+        },
+
+        waterful : function(arr,args,ctx) {
+            var d = new Deferred(),
+                p = d.promise;
+
+            ctx = ctx || null;
+            args = args || [];
+
+            d.resolveWith(ctx,args);
+
+            each(arr,function(i,func){
+                p = p.then(func);
+            });
+            return p;
+        }
+    };
+
+	return async;	
+});
+define('skylark-langx/datetimes',[],function(){
+     function parseMilliSeconds(str) {
+
+        var strs = str.split(' ');
+        var number = parseInt(strs[0]);
+
+        if (isNaN(number)){
+            return 0;
+        }
+
+        var min = 60000 * 60;
+
+        switch (strs[1].trim().replace(/\./g, '')) {
+            case 'minutes':
+            case 'minute':
+            case 'min':
+            case 'mm':
+            case 'm':
+                return 60000 * number;
+            case 'hours':
+            case 'hour':
+            case 'HH':
+            case 'hh':
+            case 'h':
+            case 'H':
+                return min * number;
+            case 'seconds':
+            case 'second':
+            case 'sec':
+            case 'ss':
+            case 's':
+                return 1000 * number;
+            case 'days':
+            case 'day':
+            case 'DD':
+            case 'dd':
+            case 'd':
+                return (min * 24) * number;
+            case 'months':
+            case 'month':
+            case 'MM':
+            case 'M':
+                return (min * 24 * 28) * number;
+            case 'weeks':
+            case 'week':
+            case 'W':
+            case 'w':
+                return (min * 24 * 7) * number;
+            case 'years':
+            case 'year':
+            case 'yyyy':
+            case 'yy':
+            case 'y':
+                return (min * 24 * 365) * number;
+            default:
+                return 0;
+        }
+    };
+	
+	return {
+		parseMilliSeconds
+	};
+});
+define('skylark-langx/Evented',[
+    "./klass",
+    "./arrays",
+    "./objects",
+    "./types"
+],function(klass,arrays,objects,types){
+    var slice = Array.prototype.slice,
+        compact = arrays.compact,
+        isDefined = types.isDefined,
+        isPlainObject = types.isPlainObject,
+        isFunction = types.isFunction,
+        isString = types.isString,
+        isEmptyObject = types.isEmptyObject,
+        mixin = objects.mixin;
+
+    function parse(event) {
+        var segs = ("" + event).split(".");
+        return {
+            name: segs[0],
+            ns: segs.slice(1).join(" ")
+        };
+    }
+
+    var Evented = klass({
+        on: function(events, selector, data, callback, ctx, /*used internally*/ one) {
+            var self = this,
+                _hub = this._hub || (this._hub = {});
+
+            if (isPlainObject(events)) {
+                ctx = callback;
+                each(events, function(type, fn) {
+                    self.on(type, selector, data, fn, ctx, one);
+                });
+                return this;
+            }
+
+            if (!isString(selector) && !isFunction(callback)) {
+                ctx = callback;
+                callback = data;
+                data = selector;
+                selector = undefined;
+            }
+
+            if (isFunction(data)) {
+                ctx = callback;
+                callback = data;
+                data = null;
+            }
+
+            if (isString(events)) {
+                events = events.split(/\s/)
+            }
+
+            events.forEach(function(event) {
+                var parsed = parse(event),
+                    name = parsed.name,
+                    ns = parsed.ns;
+
+                (_hub[name] || (_hub[name] = [])).push({
+                    fn: callback,
+                    selector: selector,
+                    data: data,
+                    ctx: ctx,
+                    ns : ns,
+                    one: one
+                });
+            });
+
+            return this;
+        },
+
+        one: function(events, selector, data, callback, ctx) {
+            return this.on(events, selector, data, callback, ctx, 1);
+        },
+
+        trigger: function(e /*,argument list*/ ) {
+            if (!this._hub) {
+                return this;
+            }
+
+            var self = this;
+
+            if (isString(e)) {
+                e = new CustomEvent(e);
+            }
+
+            Object.defineProperty(e,"target",{
+                value : this
+            });
+
+            var args = slice.call(arguments, 1);
+            if (isDefined(args)) {
+                args = [e].concat(args);
+            } else {
+                args = [e];
+            }
+            [e.type || e.name, "all"].forEach(function(eventName) {
+                var parsed = parse(eventName),
+                    name = parsed.name,
+                    ns = parsed.ns;
+
+                var listeners = self._hub[name];
+                if (!listeners) {
+                    return;
+                }
+
+                var len = listeners.length,
+                    reCompact = false;
+
+                for (var i = 0; i < len; i++) {
+                    var listener = listeners[i];
+                    if (ns && (!listener.ns ||  !listener.ns.startsWith(ns))) {
+                        continue;
+                    }
+                    if (e.data) {
+                        if (listener.data) {
+                            e.data = mixin({}, listener.data, e.data);
+                        }
+                    } else {
+                        e.data = listener.data || null;
+                    }
+                    listener.fn.apply(listener.ctx, args);
+                    if (listener.one) {
+                        listeners[i] = null;
+                        reCompact = true;
+                    }
+                }
+
+                if (reCompact) {
+                    self._hub[eventName] = compact(listeners);
+                }
+
+            });
+            return this;
+        },
+
+        listened: function(event) {
+            var evtArr = ((this._hub || (this._events = {}))[event] || []);
+            return evtArr.length > 0;
+        },
+
+        listenTo: function(obj, event, callback, /*used internally*/ one) {
+            if (!obj) {
+                return this;
+            }
+
+            // Bind callbacks on obj,
+            if (isString(callback)) {
+                callback = this[callback];
+            }
+
+            if (one) {
+                obj.one(event, callback, this);
+            } else {
+                obj.on(event, callback, this);
+            }
+
+            //keep track of them on listening.
+            var listeningTo = this._listeningTo || (this._listeningTo = []),
+                listening;
+
+            for (var i = 0; i < listeningTo.length; i++) {
+                if (listeningTo[i].obj == obj) {
+                    listening = listeningTo[i];
+                    break;
+                }
+            }
+            if (!listening) {
+                listeningTo.push(
+                    listening = {
+                        obj: obj,
+                        events: {}
+                    }
+                );
+            }
+            var listeningEvents = listening.events,
+                listeningEvent = listeningEvents[event] = listeningEvents[event] || [];
+            if (listeningEvent.indexOf(callback) == -1) {
+                listeningEvent.push(callback);
+            }
+
+            return this;
+        },
+
+        listenToOnce: function(obj, event, callback) {
+            return this.listenTo(obj, event, callback, 1);
+        },
+
+        off: function(events, callback) {
+            var _hub = this._hub || (this._hub = {});
+            if (isString(events)) {
+                events = events.split(/\s/)
+            }
+
+            events.forEach(function(event) {
+                var parsed = parse(event),
+                    name = parsed.name,
+                    ns = parsed.ns;
+
+                var evts = _hub[name];
+
+                if (evts) {
+                    var liveEvents = [];
+
+                    if (callback || ns) {
+                        for (var i = 0, len = evts.length; i < len; i++) {
+                            
+                            if (callback && evts[i].fn !== callback && evts[i].fn._ !== callback) {
+                                liveEvents.push(evts[i]);
+                                continue;
+                            } 
+
+                            if (ns && (!evts[i].ns || evts[i].ns.indexOf(ns)!=0)) {
+                                liveEvents.push(evts[i]);
+                                continue;
+                            }
+                        }
+                    }
+
+                    if (liveEvents.length) {
+                        _hub[name] = liveEvents;
+                    } else {
+                        delete _hub[name];
+                    }
+
+                }
+            });
+
+            return this;
+        },
+        unlistenTo: function(obj, event, callback) {
+            var listeningTo = this._listeningTo;
+            if (!listeningTo) {
+                return this;
+            }
+            for (var i = 0; i < listeningTo.length; i++) {
+                var listening = listeningTo[i];
+
+                if (obj && obj != listening.obj) {
+                    continue;
+                }
+
+                var listeningEvents = listening.events;
+                for (var eventName in listeningEvents) {
+                    if (event && event != eventName) {
+                        continue;
+                    }
+
+                    var listeningEvent = listeningEvents[eventName];
+
+                    for (var j = 0; j < listeningEvent.length; j++) {
+                        if (!callback || callback == listeningEvent[i]) {
+                            listening.obj.off(eventName, listeningEvent[i], this);
+                            listeningEvent[i] = null;
+                        }
+                    }
+
+                    listeningEvent = listeningEvents[eventName] = compact(listeningEvent);
+
+                    if (isEmptyObject(listeningEvent)) {
+                        listeningEvents[eventName] = null;
+                    }
+
+                }
+
+                if (isEmptyObject(listeningEvents)) {
+                    listeningTo[i] = null;
+                }
+            }
+
+            listeningTo = this._listeningTo = compact(listeningTo);
+            if (isEmptyObject(listeningTo)) {
+                this._listeningTo = null;
+            }
+
+            return this;
+        }
+    });
+
+    return Evented;
+
+});
+define('skylark-langx/hoster',[
+],function(){
+	// The javascript host environment, brower and nodejs are supported.
+	var hoster = {
+		"isBrowser" : true, // default
+		"isNode" : null,
+		"global" : this,
+		"browser" : null,
+		"node" : null
+	};
+
+	if (typeof process == "object" && process.versions && process.versions.node && process.versions.v8) {
+		hoster.isNode = true;
+		hoster.isBrowser = false;
+	}
+
+	hoster.global = (function(){
+		if (typeof global !== 'undefined' && typeof global !== 'function') {
+			// global spec defines a reference to the global object called 'global'
+			// https://github.com/tc39/proposal-global
+			// `global` is also defined in NodeJS
+			return global;
+		} else if (typeof window !== 'undefined') {
+			// window is defined in browsers
+			return window;
+		}
+		else if (typeof self !== 'undefined') {
+			// self is defined in WebWorkers
+			return self;
+		}
+		return this;
+	})();
+
+	var _document = null;
+
+	Object.defineProperty(hoster,"document",function(){
+		if (!_document) {
+			var w = typeof window === 'undefined' ? require('html-element') : window;
+			_document = w.document;
+		}
+
+		return _document;
+	});
+
+	if (hoster.isBrowser) {
+	    function uaMatch( ua ) {
+		    ua = ua.toLowerCase();
+
+		    var match = /(chrome)[ \/]([\w.]+)/.exec( ua ) ||
+		      /(webkit)[ \/]([\w.]+)/.exec( ua ) ||
+		      /(opera)(?:.*version|)[ \/]([\w.]+)/.exec( ua ) ||
+		      /(msie) ([\w.]+)/.exec( ua ) ||
+		      ua.indexOf('compatible') < 0 && /(mozilla)(?:.*? rv:([\w.]+)|)/.exec( ua ) ||
+		      [];
+
+		    return {
+		      browser: match[ 1 ] || '',
+		      version: match[ 2 ] || '0'
+		    };
+	  	};
+
+	    var matched = uaMatch( navigator.userAgent );
+
+	    var browser = hoster.browser = {};
+
+	    if ( matched.browser ) {
+	      browser[ matched.browser ] = true;
+	      browser.version = matched.version;
+	    }
+
+	    // Chrome is Webkit, but Webkit is also Safari.
+	    if ( browser.chrome ) {
+	      browser.webkit = true;
+	    } else if ( browser.webkit ) {
+	      browser.safari = true;
+	    }
+	}
+
+	return  hoster;
+});
+define('skylark-langx/strings',[
+],function(){
+    // add default escape function for escaping HTML entities
+    var escapeCharMap = Object.freeze({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#x27;',
+        '`': '&#x60;',
+        '=': '&#x3D;',
+    });
+    function replaceChar(c) {
+        return escapeCharMap[c];
+    }
+    var escapeChars = /[&<>"'`=]/g;
+
+
+     /*
+     * Converts camel case into dashes.
+     * @param {String} str
+     * @return {String}
+     * @exapmle marginTop -> margin-top
+     */
+    function dasherize(str) {
+        return str.replace(/::/g, '/')
+            .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+            .replace(/([a-z\d])([A-Z])/g, '$1_$2')
+            .replace(/_/g, '-')
+            .toLowerCase();
+    }
+
+    function deserializeValue(value) {
+        try {
+            return value ?
+                value == "true" ||
+                (value == "false" ? false :
+                    value == "null" ? null :
+                    +value + "" == value ? +value :
+                    /^[\[\{]/.test(value) ? JSON.parse(value) :
+                    value) : value;
+        } catch (e) {
+            return value;
+        }
+    }
+
+    function escapeHTML(str) {
+        if (str == null) {
+            return '';
+        }
+        if (!str) {
+            return String(str);
+        }
+
+        return str.toString().replace(escapeChars, replaceChar);
+    }
+
+    function generateUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            var r = Math.random() * 16 | 0;
+            var v = c === 'x' ? r : ((r & 0x3) | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    function trim(str) {
+        return str == null ? "" : String.prototype.trim.call(str);
+    }
+
+    function substitute( /*String*/ template,
+        /*Object|Array*/
+        map,
+        /*Function?*/
+        transform,
+        /*Object?*/
+        thisObject) {
+        // summary:
+        //    Performs parameterized substitutions on a string. Throws an
+        //    exception if any parameter is unmatched.
+        // template:
+        //    a string with expressions in the form `${key}` to be replaced or
+        //    `${key:format}` which specifies a format function. keys are case-sensitive.
+        // map:
+        //    hash to search for substitutions
+        // transform:
+        //    a function to process all parameters before substitution takes
+
+
+        thisObject = thisObject || window;
+        transform = transform ?
+            proxy(thisObject, transform) : function(v) {
+                return v;
+            };
+
+        function getObject(key, map) {
+            if (key.match(/\./)) {
+                var retVal,
+                    getValue = function(keys, obj) {
+                        var _k = keys.pop();
+                        if (_k) {
+                            if (!obj[_k]) return null;
+                            return getValue(keys, retVal = obj[_k]);
+                        } else {
+                            return retVal;
+                        }
+                    };
+                return getValue(key.split(".").reverse(), map);
+            } else {
+                return map[key];
+            }
+        }
+
+        return template.replace(/\$\{([^\s\:\}]+)(?:\:([^\s\:\}]+))?\}/g,
+            function(match, key, format) {
+                var value = getObject(key, map);
+                if (format) {
+                    value = getObject(format, thisObject).call(thisObject, value, key);
+                }
+                return transform(value, key).toString();
+            }); // String
+    }
+
+    var idCounter = 0;
+    function uniqueId (prefix) {
+        var id = ++idCounter + '';
+        return prefix ? prefix + id : id;
+    }
+
+
+    /**
+     * https://github.com/cho45/micro-template.js
+     * (c) cho45 http://cho45.github.com/mit-license
+     */
+    function template (id, data) {
+
+        function include(name, args) {
+            var stash = {};
+            for (var key in template.context.stash) if (template.context.stash.hasOwnProperty(key)) {
+                stash[key] = template.context.stash[key];
+            }
+            if (args) for (var key in args) if (args.hasOwnProperty(key)) {
+                stash[key] = args[key];
+            }
+            var context = template.context;
+            context.ret += template(name, stash);
+            template.context = context;
+        }
+
+        function wrapper(name, fun) {
+            var current = template.context.ret;
+            template.context.ret = '';
+            fun.apply(template.context);
+            var content = template.context.ret;
+            var orig_content = template.context.stash.content;
+            template.context.stash.content = content;
+            template.context.ret = current + template(name, template.context.stash);
+            template.context.stash.content = orig_content;
+        }
+
+        var me = arguments.callee;
+        if (!me.cache[id]) me.cache[id] = (function () {
+            var name = id, string = /^[\w\-]+$/.test(id) ? me.get(id): (name = 'template(string)', id); // no warnings
+            var line = 1, body = (
+                "try { " +
+                    (me.variable ?  "var " + me.variable + " = this.stash;" : "with (this.stash) { ") +
+                        "this.ret += '"  +
+                        string.
+                            replace(/<%/g, '\x11').replace(/%>/g, '\x13'). // if you want other tag, just edit this line
+                            replace(/'(?![^\x11\x13]+?\x13)/g, '\\x27').
+                            replace(/^\s*|\s*$/g, '').
+                            replace(/\n|\r\n/g, function () { return "';\nthis.line = " + (++line) + "; this.ret += '\\n" }).
+                            replace(/\x11=raw(.+?)\x13/g, "' + ($1) + '").
+                            replace(/\x11=(.+?)\x13/g, "' + this.escapeHTML($1) + '").
+                            replace(/\x11(.+?)\x13/g, "'; $1; this.ret += '") +
+                    "'; " + (me.variable ? "" : "}") + "return this.ret;" +
+                "} catch (e) { throw 'TemplateError: ' + e + ' (on " + name + "' + ' line ' + this.line + ')'; } " +
+                "//@ sourceURL=" + name + "\n" // source map
+            ).replace(/this\.ret \+= '';/g, '');
+            var func = new Function(body);
+            var map  = { '&' : '&amp;', '<' : '&lt;', '>' : '&gt;', '\x22' : '&#x22;', '\x27' : '&#x27;' };
+            var escapeHTML = function (string) { return (''+string).replace(/[&<>\'\"]/g, function (_) { return map[_] }) };
+            return function (stash) { return func.call(me.context = { escapeHTML: escapeHTML, line: 1, ret : '', stash: stash }) };
+        })();
+        return data ? me.cache[id](data) : me.cache[id];
+    }
+
+    template.cache = {};
+    
+
+    template.get = function (id) {
+        return document.getElementById(id).innerHTML;
+    };
+
+    function rtrim(str) {
+        return str.replace(/\s+$/g, '');
+    }
+
+    // Slugify a string
+    function slugify(str) {
+        str = str.replace(/^\s+|\s+$/g, '');
+
+        // Make the string lowercase
+        str = str.toLowerCase();
+
+        // Remove accents, swap ñ for n, etc
+        var from = "ÁÄÂÀÃÅČÇĆĎÉĚËÈÊẼĔȆÍÌÎÏŇÑÓÖÒÔÕØŘŔŠŤÚŮÜÙÛÝŸŽáäâàãåčçćďéěëèêẽĕȇíìîïňñóöòôõøðřŕšťúůüùûýÿžþÞĐđßÆa·/_,:;";
+        var to   = "AAAAAACCCDEEEEEEEEIIIINNOOOOOORRSTUUUUUYYZaaaaaacccdeeeeeeeeiiiinnooooooorrstuuuuuyyzbBDdBAa------";
+        for (var i=0, l=from.length ; i<l ; i++) {
+            str = str.replace(new RegExp(from.charAt(i), 'g'), to.charAt(i));
+        }
+
+        // Remove invalid chars
+        str = str.replace(/[^a-z0-9 -]/g, '') 
+        // Collapse whitespace and replace by -
+        .replace(/\s+/g, '-') 
+        // Collapse dashes
+        .replace(/-+/g, '-'); 
+
+        return str;
+    }    
+
+    // return boolean if string 'true' or string 'false', or if a parsable string which is a number
+    // also supports JSON object and/or arrays parsing
+    function toType(str) {
+        var type = typeof str;
+        if (type !== 'string') {
+            return str;
+        }
+        var nb = parseFloat(str);
+        if (!isNaN(nb) && isFinite(str)) {
+            return nb;
+        }
+        if (str === 'false') {
+            return false;
+        }
+        if (str === 'true') {
+            return true;
+        }
+
+        try {
+            str = JSON.parse(str);
+        } catch (e) {}
+
+        return str;
+    }
+
+	return {
+        camelCase: function(str) {
+            return str.replace(/-([\da-z])/g, function(a) {
+                return a.toUpperCase().replace('-', '');
+            });
+        },
+
+        dasherize: dasherize,
+
+        deserializeValue: deserializeValue,
+
+        escapeHTML : escapeHTML,
+
+        generateUUID : generateUUID,
+
+        lowerFirst: function(str) {
+            return str.charAt(0).toLowerCase() + str.slice(1);
+        },
+
+        rtrim : rtrim,
+
+        serializeValue: function(value) {
+            return JSON.stringify(value)
+        },
+
+
+        substitute: substitute,
+
+        slugify : slugify,
+
+        template : template,
+
+        trim: trim,
+
+        uniqueId: uniqueId,
+
+        upperFirst: function(str) {
+            return str.charAt(0).toUpperCase() + str.slice(1);
+        }
+	} ; 
+
+});
+define('skylark-langx/Xhr',[
+    "./arrays",
+    "./Deferred",
+    "./Evented",
+    "./objects",
+    "./funcs",
+    "./types"
+],function(arrays,Deferred,Evented,objects,funcs,types){
+    var each = objects.each,
+        mixin = objects.mixin,
+        noop = funcs.noop,
+        isArray = types.isArray,
+        isFunction = types.isFunction,
+        isPlainObject = types.isPlainObject,
+        type = types.type;
+ 
+     var getAbsoluteUrl = (function() {
+        var a;
+
+        return function(url) {
+            if (!a) a = document.createElement('a');
+            a.href = url;
+
+            return a.href;
+        };
+    })();
+   
     var Xhr = (function(){
         var jsonpID = 0,
             key,
@@ -2213,10 +3193,14 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
         var param = function(obj, traditional) {
             var params = []
             params.add = function(key, value) {
-                if (isFunction(value)) value = value()
-                if (value == null) value = ""
-                this.push(escape(key) + '=' + escape(value))
-            }
+                if (isFunction(value)) {
+                  value = value();
+                }
+                if (value == null) {
+                  value = "";
+                }
+                this.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+            };
             serialize(params, obj, traditional)
             return params.join('&').replace(/%20/g, '+')
         };
@@ -2231,6 +3215,10 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
                     xhr = _.xhr = new XMLHttpRequest();
 
                 serializeData(options)
+
+                if (options.beforeSend) {
+                    options.beforeSend.call(this, xhr, options);
+                }                
 
                 var dataType = options.dataType || options.handleAs,
                     mime = options.mimeType || options.accepts[dataType],
@@ -2319,7 +3307,7 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
 
                 var onprogress = function(evt) {
                     if (deferred) {
-                        deferred.progress(evt,xhr.status,xhr);
+                        deferred.notify(evt,xhr.status,xhr);
                     }
                 }
 
@@ -2426,6 +3414,17 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
         return Xhr;
     })();
 
+	return Xhr;	
+});
+define('skylark-langx/Restful',[
+    "./Evented",
+    "./objects",
+    "./strings",
+    "./Xhr"
+],function(Evented,objects,strings,Xhr){
+    var mixin = objects.mixin,
+        substitute = strings.substitute;
+
     var Restful = Evented.inherit({
         "klassName" : "Restful",
 
@@ -2433,7 +3432,7 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
         
         getBaseUrl : function(args) {
             //$$baseEndpoint : "/files/${fileId}/comments",
-            var baseEndpoint = String.substitute(this.baseEndpoint,args),
+            var baseEndpoint = substitute(this.baseEndpoint,args),
                 baseUrl = this.server + this.basePath + baseEndpoint;
             if (args[this.idAttribute]!==undefined) {
                 baseUrl = baseUrl + "/" + args[this.idAttribute]; 
@@ -2543,172 +3542,361 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
             mixin(this,params);
  //           this._xhr = XHRx();
        }
-
-
     });
+
+    return Restful;
+});
+define('skylark-langx/Stateful',[
+	"./Evented",
+  "./strings",
+  "./objects"
+],function(Evented,strings,objects){
+    var isEqual = objects.isEqual,
+        mixin = objects.mixin,
+        result = objects.result,
+        isEmptyObject = objects.isEmptyObject,
+        clone = objects.clone,
+        uniqueId = strings.uniqueId;
+
+    var Stateful = Evented.inherit({
+        _construct : function(attributes, options) {
+            var attrs = attributes || {};
+            options || (options = {});
+            this.cid = uniqueId(this.cidPrefix);
+            this.attributes = {};
+            if (options.collection) this.collection = options.collection;
+            if (options.parse) attrs = this.parse(attrs, options) || {};
+            var defaults = result(this, 'defaults');
+            attrs = mixin({}, defaults, attrs);
+            this.set(attrs, options);
+            this.changed = {};
+        },
+
+        // A hash of attributes whose current and previous value differ.
+        changed: null,
+
+        // The value returned during the last failed validation.
+        validationError: null,
+
+        // The default name for the JSON `id` attribute is `"id"`. MongoDB and
+        // CouchDB users may want to set this to `"_id"`.
+        idAttribute: 'id',
+
+        // The prefix is used to create the client id which is used to identify models locally.
+        // You may want to override this if you're experiencing name clashes with model ids.
+        cidPrefix: 'c',
+
+
+        // Return a copy of the model's `attributes` object.
+        toJSON: function(options) {
+          return clone(this.attributes);
+        },
+
+
+        // Get the value of an attribute.
+        get: function(attr) {
+          return this.attributes[attr];
+        },
+
+        // Returns `true` if the attribute contains a value that is not null
+        // or undefined.
+        has: function(attr) {
+          return this.get(attr) != null;
+        },
+
+        // Set a hash of model attributes on the object, firing `"change"`. This is
+        // the core primitive operation of a model, updating the data and notifying
+        // anyone who needs to know about the change in state. The heart of the beast.
+        set: function(key, val, options) {
+          if (key == null) return this;
+
+          // Handle both `"key", value` and `{key: value}` -style arguments.
+          var attrs;
+          if (typeof key === 'object') {
+            attrs = key;
+            options = val;
+          } else {
+            (attrs = {})[key] = val;
+          }
+
+          options || (options = {});
+
+          // Run validation.
+          if (!this._validate(attrs, options)) return false;
+
+          // Extract attributes and options.
+          var unset      = options.unset;
+          var silent     = options.silent;
+          var changes    = [];
+          var changing   = this._changing;
+          this._changing = true;
+
+          if (!changing) {
+            this._previousAttributes = clone(this.attributes);
+            this.changed = {};
+          }
+
+          var current = this.attributes;
+          var changed = this.changed;
+          var prev    = this._previousAttributes;
+
+          // For each `set` attribute, update or delete the current value.
+          for (var attr in attrs) {
+            val = attrs[attr];
+            if (!isEqual(current[attr], val)) changes.push(attr);
+            if (!isEqual(prev[attr], val)) {
+              changed[attr] = val;
+            } else {
+              delete changed[attr];
+            }
+            unset ? delete current[attr] : current[attr] = val;
+          }
+
+          // Update the `id`.
+          if (this.idAttribute in attrs) this.id = this.get(this.idAttribute);
+
+          // Trigger all relevant attribute changes.
+          if (!silent) {
+            if (changes.length) this._pending = options;
+            for (var i = 0; i < changes.length; i++) {
+              this.trigger('change:' + changes[i], this, current[changes[i]], options);
+            }
+          }
+
+          // You might be wondering why there's a `while` loop here. Changes can
+          // be recursively nested within `"change"` events.
+          if (changing) return this;
+          if (!silent) {
+            while (this._pending) {
+              options = this._pending;
+              this._pending = false;
+              this.trigger('change', this, options);
+            }
+          }
+          this._pending = false;
+          this._changing = false;
+          return this;
+        },
+
+        // Remove an attribute from the model, firing `"change"`. `unset` is a noop
+        // if the attribute doesn't exist.
+        unset: function(attr, options) {
+          return this.set(attr, void 0, mixin({}, options, {unset: true}));
+        },
+
+        // Clear all attributes on the model, firing `"change"`.
+        clear: function(options) {
+          var attrs = {};
+          for (var key in this.attributes) attrs[key] = void 0;
+          return this.set(attrs, mixin({}, options, {unset: true}));
+        },
+
+        // Determine if the model has changed since the last `"change"` event.
+        // If you specify an attribute name, determine if that attribute has changed.
+        hasChanged: function(attr) {
+          if (attr == null) return !isEmptyObject(this.changed);
+          return this.changed[attr] !== undefined;
+        },
+
+        // Return an object containing all the attributes that have changed, or
+        // false if there are no changed attributes. Useful for determining what
+        // parts of a view need to be updated and/or what attributes need to be
+        // persisted to the server. Unset attributes will be set to undefined.
+        // You can also pass an attributes object to diff against the model,
+        // determining if there *would be* a change.
+        changedAttributes: function(diff) {
+          if (!diff) return this.hasChanged() ? clone(this.changed) : false;
+          var old = this._changing ? this._previousAttributes : this.attributes;
+          var changed = {};
+          for (var attr in diff) {
+            var val = diff[attr];
+            if (isEqual(old[attr], val)) continue;
+            changed[attr] = val;
+          }
+          return !isEmptyObject(changed) ? changed : false;
+        },
+
+        // Get the previous value of an attribute, recorded at the time the last
+        // `"change"` event was fired.
+        previous: function(attr) {
+          if (attr == null || !this._previousAttributes) return null;
+          return this._previousAttributes[attr];
+        },
+
+        // Get all of the attributes of the model at the time of the previous
+        // `"change"` event.
+        previousAttributes: function() {
+          return clone(this._previousAttributes);
+        },
+
+        // Create a new model with identical attributes to this one.
+        clone: function() {
+          return new this.constructor(this.attributes);
+        },
+
+        // A model is new if it has never been saved to the server, and lacks an id.
+        isNew: function() {
+          return !this.has(this.idAttribute);
+        },
+
+        // Check if the model is currently in a valid state.
+        isValid: function(options) {
+          return this._validate({}, mixin({}, options, {validate: true}));
+        },
+
+        // Run validation against the next complete set of model attributes,
+        // returning `true` if all is well. Otherwise, fire an `"invalid"` event.
+        _validate: function(attrs, options) {
+          if (!options.validate || !this.validate) return true;
+          attrs = mixin({}, this.attributes, attrs);
+          var error = this.validationError = this.validate(attrs, options) || null;
+          if (!error) return true;
+          this.trigger('invalid', this, error, mixin(options, {validationError: error}));
+          return false;
+        }
+    });
+
+	return Stateful;
+});
+define('skylark-langx/topic',[
+	"./Evented"
+],function(Evented){
+	var hub = new Evented();
+
+	return {
+	    publish: function(name, arg1,argn) {
+	        var data = [].slice.call(arguments, 1);
+
+	        return hub.trigger({
+	            type : name,
+	            data : data
+	        });
+	    },
+
+        subscribe: function(name, listener,ctx) {
+        	var handler = function(e){
+                listener.apply(ctx,e.data);
+            };
+            hub.on(name, handler);
+            return {
+            	remove : function(){
+            		hub.off(name,handler);
+            	}
+            }
+
+        }
+
+	}
+});
+define('skylark-langx/langx',[
+    "./skylark",
+    "./arrays",
+    "./ArrayStore",
+    "./aspect",
+    "./async",
+    "./datetimes",
+    "./Deferred",
+    "./Evented",
+    "./funcs",
+    "./hoster",
+    "./klass",
+    "./numbers",
+    "./objects",
+    "./Restful",
+    "./Stateful",
+    "./strings",
+    "./topic",
+    "./types",
+    "./Xhr"
+], function(skylark,arrays,ArrayStore,aspect,async,datetimes,Deferred,Evented,funcs,hoster,klass,numbers,objects,Restful,Stateful,strings,topic,types,Xhr) {
+    "use strict";
+    var toString = {}.toString,
+        concat = Array.prototype.concat,
+        indexOf = Array.prototype.indexOf,
+        slice = Array.prototype.slice,
+        filter = Array.prototype.filter,
+        mixin = objects.mixin,
+        safeMixin = objects.safeMixin,
+        isFunction = types.isFunction;
+
+
+    function createEvent(type, props) {
+        var e = new CustomEvent(type, props);
+
+        return safeMixin(e, props);
+    }
+    
+
+    function funcArg(context, arg, idx, payload) {
+        return isFunction(arg) ? arg.call(context, idx, payload) : arg;
+    }
+
+    function getQueryParams(url) {
+        var url = url || window.location.href,
+            segs = url.split("?"),
+            params = {};
+
+        if (segs.length > 1) {
+            segs[1].split("&").forEach(function(queryParam) {
+                var nv = queryParam.split('=');
+                params[nv[0]] = nv[1];
+            });
+        }
+        return params;
+    }
+
+
+    function toPixel(value) {
+        // style values can be floats, client code may want
+        // to round for integer pixels.
+        return parseFloat(value) || 0;
+    }
+
+
+    var _uid = 1;
+
+    function uid(obj) {
+        return obj._uid || (obj._uid = _uid++);
+    }
 
     function langx() {
         return langx;
     }
 
     mixin(langx, {
-        after: aspect("after"),
-
-        allKeys: allKeys,
-
-        around: aspect("around"),
-
-        ArrayStore : ArrayStore,
-
-        async : async,
-        
-        before: aspect("before"),
-
-        camelCase: function(str) {
-            return str.replace(/-([\da-z])/g, function(a) {
-                return a.toUpperCase().replace('-', '');
-            });
-        },
-
-        clone: clone,
-
-        compact: compact,
-
         createEvent : createEvent,
-
-        dasherize: dasherize,
-
-        debounce: debounce,
-
-        defaults : createAssigner(allKeys, true),
-
-        delegate: delegate,
-
-        Deferred: Deferred,
-
-        Evented: Evented,
-
-        defer: defer,
-
-        deserializeValue: deserializeValue,
-
-        each: each,
-
-        first : function(items,n) {
-            if (n) {
-                return items.slice(0,n);
-            } else {
-                return items[0];
-            }
-        },
-
-        flatten: flatten,
 
         funcArg: funcArg,
 
         getQueryParams: getQueryParams,
 
-        has: has,
-
-        inArray: inArray,
-
-        isArray: isArray,
-
-        isArrayLike: isArrayLike,
-
-        isBoolean: isBoolean,
-
-        isDefined: function(v) {
-            return v !== undefined;
-        },
-
-        isDocument: isDocument,
-
-        isEmptyObject: isEmptyObject,
-
-        isEqual: isEqual,
-
-        isFunction: isFunction,
-
-        isHtmlNode: isHtmlNode,
-
-        isMatch: isMatch,
-
-        isNumber: isNumber,
-
-        isObject: isObject,
-
-        isPlainObject: isPlainObject,
-
-        isString: isString,
-
-        isSameOrigin: isSameOrigin,
-
-        isWindow: isWindow,
-
-        keys: keys,
-
-        klass: function(props, parent,mixins, options) {
-            return createClass(props, parent, mixins,options);
-        },
-
-        lowerFirst: function(str) {
-            return str.charAt(0).toLowerCase() + str.slice(1);
-        },
-
-        makeArray: makeArray,
-
-        map: map,
-
-        mixin: mixin,
-
-        noop : noop,
-
-        proxy: proxy,
-
-        removeItem: removeItem,
-
-        Restful: Restful,
-
-        result : result,
-        
-        returnTrue: function() {
-            return true;
-        },
-
-        returnFalse: function() {
-            return false;
-        },
-
-        safeMixin: safeMixin,
-
-        serializeValue: function(value) {
-            return JSON.stringify(value)
-        },
-
-        Stateful: Stateful,
-
-        substitute: substitute,
-
         toPixel: toPixel,
-
-        trim: trim,
-
-        type: type,
 
         uid: uid,
 
-        uniq: uniq,
+        URL: typeof window !== "undefined" ? window.URL || window.webkitURL : null
 
-        uniqueId: uniqueId,
+    });
 
-        upperFirst: function(str) {
-            return str.charAt(0).toUpperCase() + str.slice(1);
-        },
 
-        URL: typeof window !== "undefined" ? window.URL || window.webkitURL : null,
+    mixin(langx, arrays,aspect,datetimes,funcs,numbers,objects,strings,types,{
+        ArrayStore : ArrayStore,
 
-        values: values,
+        async : async,
+        
+        Deferred: Deferred,
+
+        Evented: Evented,
+
+        hoster : hoster,
+
+        klass : klass,
+
+        Restful: Restful,
+        
+        Stateful: Stateful,
+
+        topic : topic,
 
         Xhr: Xhr
 
@@ -2716,23 +3904,39 @@ define('skylark-langx/langx',["./skylark"], function(skylark) {
 
     return skylark.langx = langx;
 });
-define('skylark-utils/skylark',["skylark-langx/skylark"], function(skylark) {
+define('skylark-utils-dom/skylark',["skylark-langx/skylark"], function(skylark) {
     return skylark;
 });
 
-define('skylark-utils/langx',[
+define('skylark-utils-dom/dom',["./skylark"], function(skylark) {
+	return skylark.dom = skylark.attach("utils.dom",{});
+});
+
+define('skylark-utils-dom/langx',[
     "skylark-langx/langx"
 ], function(langx) {
     return langx;
 });
 
-define('skylark-utils/browser',[
-    "./skylark",
+define('skylark-utils-dom/browser',[
+    "./dom",
     "./langx"
-], function(skylark,langx) {
+], function(dom,langx) {
+    "use strict";
+
+    var browser = langx.hoster.browser;
+ 
     var checkedCssProperties = {
-        "transitionproperty": "TransitionProperty",
-    };
+            "transitionproperty": "TransitionProperty",
+        },
+        transEndEventNames = {
+          WebkitTransition : 'webkitTransitionEnd',
+          MozTransition    : 'transitionend',
+          OTransition      : 'oTransitionEnd otransitionend',
+          transition       : 'transitionend'
+        },
+        transEndEventName = null;
+
 
     var css3PropPrefix = "",
         css3StylePrefix = "",
@@ -2781,9 +3985,17 @@ define('skylark-utils/browser',[
             var cssPropName = langx.dasherize(matched[2]);
             cssProps[cssPropName] = css3PropPrefix + cssPropName;
 
+            if (transEndEventNames[name]) {
+              transEndEventName = transEndEventNames[name];
+            }
         }
     }
 
+    if (!transEndEventName) {
+        if (testStyle["transition"] !== undefined) {
+            transEndEventName = transEndEventNames["transition"];
+        }
+    }
 
     function normalizeCssEvent(name) {
         return css3EventPrefix ? css3EventPrefix + name : name.toLowerCase();
@@ -2795,10 +4007,6 @@ define('skylark-utils/browser',[
 
     function normalizeStyleProperty(name) {
         return cssStyles[name] || name;
-    }
-
-    function browser() {
-        return browser;
     }
 
     langx.mixin(browser, {
@@ -2828,15 +4036,21 @@ define('skylark-utils/browser',[
 
     });
 
+    if  (transEndEventName) {
+        browser.support.transition = {
+            end : transEndEventName
+        };
+    }
+
     testEl = null;
 
-    return skylark.browser = browser;
+    return dom.browser = browser;
 });
 
-define('skylark-utils/styler',[
-    "./skylark",
+define('skylark-utils-dom/styler',[
+    "./dom",
     "./langx"
-], function(skylark, langx) {
+], function(dom, langx) {
     var every = Array.prototype.every,
         forEach = Array.prototype.forEach,
         camelCase = langx.camelCase,
@@ -2895,7 +4109,7 @@ define('skylark-utils/styler',[
         if (!elementDisplay[nodeName]) {
             element = document.createElement(nodeName)
             document.body.appendChild(element)
-            display = getComputedStyle(element, '').getPropertyValue("display")
+            display = getStyles(element).getPropertyValue("display")
             element.parentNode.removeChild(element)
             display == "none" && (display = "block")
             elementDisplay[nodeName] = display
@@ -2952,6 +4166,22 @@ define('skylark-utils/styler',[
 
         return this;
     }
+
+    function getStyles( elem ) {
+
+        // Support: IE <=11 only, Firefox <=30 (#15098, #14150)
+        // IE throws on elements created in popups
+        // FF meanwhile throws on frame elements through "defaultView.getComputedStyle"
+        var view = elem.ownerDocument.defaultView;
+
+        if ( !view || !view.opener ) {
+            view = window;
+        }
+
+        return view.getComputedStyle( elem);
+    }
+
+
     /*
      * Get the value of a computed style property for the first element in the set of matched elements or set one or more CSS properties for every matched element.
      * @param {HTMLElement} elm
@@ -2961,13 +4191,13 @@ define('skylark-utils/styler',[
     function css(elm, property, value) {
         if (arguments.length < 3) {
             var computedStyle,
-                computedStyle = getComputedStyle(elm, '')
+                computedStyle = getStyles(elm)
             if (langx.isString(property)) {
-                return elm.style[camelCase(property)] || computedStyle.getPropertyValue(property)
+                return elm.style[camelCase(property)] || computedStyle.getPropertyValue(dasherize(property))
             } else if (langx.isArrayLike(property)) {
                 var props = {}
                 forEach.call(property, function(prop) {
-                    props[prop] = (elm.style[camelCase(prop)] || computedStyle.getPropertyValue(prop))
+                    props[prop] = (elm.style[camelCase(prop)] || computedStyle.getPropertyValue(dasherize(prop)))
                 })
                 return props
             }
@@ -3082,14 +4312,14 @@ define('skylark-utils/styler',[
         toggleClass: toggleClass
     });
 
-    return skylark.styler = styler;
+    return dom.styler = styler;
 });
-define('skylark-utils/noder',[
-    "./skylark",
+define('skylark-utils-dom/noder',[
+    "./dom",
     "./langx",
     "./browser",
     "./styler"
-], function(skylark, langx, browser, styler) {
+], function(dom, langx, browser, styler) {
     var isIE = !!navigator.userAgent.match(/Trident/g) || !!navigator.userAgent.match(/MSIE/g),
         fragmentRE = /^\s*<(\w+|!)[^>]*>/,
         singleTagRE = /^<(\w+)\s*\/?>(?:<\/\1>|)$/,
@@ -3130,7 +4360,58 @@ define('skylark-utils/noder',[
         return name;
     };
 
+
+    function activeElement(doc) {
+        doc = doc || document;
+        var el;
+
+        // Support: IE 9 only
+        // IE9 throws an "Unspecified error" accessing document.activeElement from an <iframe>
+        try {
+            el = doc.activeElement;
+        } catch ( error ) {
+            el = doc.body;
+        }
+
+        // Support: IE 9 - 11 only
+        // IE may return null instead of an element
+        // Interestingly, this only seems to occur when NOT in an iframe
+        if ( !el ) {
+            el = doc.body;
+        }
+
+        // Support: IE 11 only
+        // IE11 returns a seemingly empty object in some cases when accessing
+        // document.activeElement from an <iframe>
+        if ( !el.nodeName ) {
+            el = doc.body;
+        }
+
+        return el;
+    };
+
+    function enhancePlaceContent(placing,node) {
+        if (langx.isFunction(placing)) {
+            return placing.apply(node,[]);
+        }
+        if (langx.isArrayLike(placing)) {
+            var neddsFlattern;
+            for (var i=0;i<placing.length;i++) {
+                if (langx.isFunction(placing[i])) {
+                    placing[i] = placing[i].apply(node,[]);
+                    if (langx.isArrayLike(placing[i])) {
+                        neddsFlattern = true;
+                    }
+                }
+            }
+            if (neddsFlattern) {
+                placing = langx.flatten(placing);
+            }
+        }
+        return placing;
+    }
     function after(node, placing, copyByClone) {
+        placing = enhancePlaceContent(placing,node);
         var refNode = node,
             parent = refNode.parentNode;
         if (parent) {
@@ -3149,6 +4430,7 @@ define('skylark-utils/noder',[
     }
 
     function append(node, placing, copyByClone) {
+        placing = enhancePlaceContent(placing,node);
         var parentNode = node,
             nodes = ensureNodes(placing, copyByClone);
         for (var i = 0; i < nodes.length; i++) {
@@ -3158,6 +4440,7 @@ define('skylark-utils/noder',[
     }
 
     function before(node, placing, copyByClone) {
+        placing = enhancePlaceContent(placing,node);
         var refNode = node,
             parent = refNode.parentNode;
         if (parent) {
@@ -3306,6 +4589,46 @@ define('skylark-utils/noder',[
         }
     }
 
+
+    // Selectors
+    function focusable( element, hasTabindex ) {
+        var map, mapName, img, focusableIfVisible, fieldset,
+            nodeName = element.nodeName.toLowerCase();
+
+        if ( "area" === nodeName ) {
+            map = element.parentNode;
+            mapName = map.name;
+            if ( !element.href || !mapName || map.nodeName.toLowerCase() !== "map" ) {
+                return false;
+            }
+            img = $( "img[usemap='#" + mapName + "']" );
+            return img.length > 0 && img.is( ":visible" );
+        }
+
+        if ( /^(input|select|textarea|button|object)$/.test( nodeName ) ) {
+            focusableIfVisible = !element.disabled;
+
+            if ( focusableIfVisible ) {
+
+                // Form controls within a disabled fieldset are disabled.
+                // However, controls within the fieldset's legend do not get disabled.
+                // Since controls generally aren't placed inside legends, we skip
+                // this portion of the check.
+                fieldset = $( element ).closest( "fieldset" )[ 0 ];
+                if ( fieldset ) {
+                    focusableIfVisible = !fieldset.disabled;
+                }
+            }
+        } else if ( "a" === nodeName ) {
+            focusableIfVisible = element.href || hasTabindex;
+        } else {
+            focusableIfVisible = hasTabindex;
+        }
+
+        return focusableIfVisible && $( element ).is( ":visible" ) && visible( $( element ) );
+    };
+
+
    var rxhtmlTag = /<(?!area|br|col|embed|hr|img|input|link|meta|param)(([\w:]+)[^>]*)\/>/gi;
  
     /*   
@@ -3319,10 +4642,10 @@ define('skylark-utils/noder',[
         } else {
             this.empty(node);
             html = html || "";
-            if (langx.isString(html) || langx.isNumber(html)) {
-
+            if (langx.isString(html)) {
                 html = html.replace( rxhtmlTag, "<$1></$2>" );
-               
+            }
+            if (langx.isString(html) || langx.isNumber(html)) {               
                 node.innerHTML = html;
             } else if (langx.isArrayLike(html)) {
                 for (var i = 0; i < html.length; i++) {
@@ -3360,14 +4683,20 @@ define('skylark-utils/noder',[
     }
 
     /*   
-     * Check to see if a dom node is a descendant of another dom node.
+     * Check to see if a dom node is a document.
      * @param {Node} node
-     * @param {Node} parent
-     * @param {Node} directly
      */
-    function isDoc(node) {
+    function isDocument(node) {
         return node != null && node.nodeType == node.DOCUMENT_NODE
     }
+
+    /*   
+     * Check to see if a dom node is in the document
+     * @param {Node} node
+     */
+    function isInDocument(node) {
+      return (node === document.body) ? true : document.body.contains(node);
+    }        
 
     /*   
      * Get the owner document object for the specified element.
@@ -3472,7 +4801,26 @@ define('skylark-utils/noder',[
 
         return this;
     }
-    /*   
+
+    function scrollParent( elm, includeHidden ) {
+        var position = styler.css(elm,"position" ),
+            excludeStaticParent = position === "absolute",
+            overflowRegex = includeHidden ? /(auto|scroll|hidden)/ : /(auto|scroll)/,
+            scrollParent = this.parents().filter( function() {
+                var parent = $( this );
+                if ( excludeStaticParent && parent.css( "position" ) === "static" ) {
+                    return false;
+                }
+                return overflowRegex.test( parent.css( "overflow" ) + parent.css( "overflow-y" ) +
+                    parent.css( "overflow-x" ) );
+            } ).eq( 0 );
+
+        return position === "fixed" || !scrollParent.length ?
+            $( this[ 0 ].ownerDocument || document ) :
+            scrollParent;
+    };
+
+        /*   
      * Replace an old node with the specified node.
      * @param {Node} node
      * @param {Node} oldNode
@@ -3495,15 +4843,15 @@ define('skylark-utils/noder',[
             time = params.time,
             callback = params.callback,
             timer,
+
             throbber = this.createElement("div", {
-                className: params.className || "throbber",
-                style: style
+                "class": params.className || "throbber"
             }),
             _overlay = overlay(throbber, {
-                className: 'overlay fade'
+                "class": 'overlay fade'
             }),
             throb = this.createElement("div", {
-                className: "throb"
+                "class": "throb"
             }),
             textNode = this.createTextNode(text || ""),
             remove = function() {
@@ -3521,6 +4869,9 @@ define('skylark-utils/noder',[
                     textNode.nodeValue = params.text;
                 }
             };
+        if (params.style) {
+            styler.css(throbber,params.style);
+        }
         throb.appendChild(textNode);
         throbber.appendChild(throb);
         elm.appendChild(throbber);
@@ -3537,6 +4888,7 @@ define('skylark-utils/noder',[
             update: update
         };
     }
+
 
     /*   
      * traverse the specified node and its descendants, perform the callback function on each
@@ -3609,6 +4961,12 @@ define('skylark-utils/noder',[
     }
 
     langx.mixin(noder, {
+        active  : activeElement,
+
+        blur : function(el) {
+            el.blur();
+        },
+
         body: function() {
             return document.body;
         },
@@ -3630,11 +4988,15 @@ define('skylark-utils/noder',[
 
         fullScreen: fullScreen,
 
+        focusable: focusable,
+
         html: html,
 
         isChildOf: isChildOf,
 
-        isDoc: isDoc,
+        isDocument: isDocument,
+
+        isInDocument: isInDocument,
 
         isWindow: langx.isWindow,
 
@@ -3671,14 +5033,14 @@ define('skylark-utils/noder',[
         unwrap: unwrap
     });
 
-    return skylark.noder = noder;
+    return dom.noder = noder;
 });
-define('skylark-utils/finder',[
-    "./skylark",
+define('skylark-utils-dom/finder',[
+    "./dom",
     "./langx",
     "./browser",
     "./noder"
-], function(skylark, langx, browser, noder, velm) {
+], function(dom, langx, browser, noder, velm) {
     var local = {},
         filter = Array.prototype.filter,
         slice = Array.prototype.slice,
@@ -3958,6 +5320,10 @@ define('skylark-utils/finder',[
             return document.activeElement === elm && (elm.href || elm.type || elm.tabindex);
         },
 
+        'focusable': function( elm ) {
+            return noder.focusable(elm, elm.tabindex != null );
+        },
+
         'first': function(elm, idx) {
             return (idx === 0);
         },
@@ -4009,6 +5375,12 @@ define('skylark-utils/finder',[
 
         'selected': function(elm) {
             return !!elm.selected;
+        },
+
+        'tabbable': function(elm) {
+            var tabIndex = elm.tabindex,
+                hasTabindex = tabIndex != null;
+            return ( !hasTabindex || tabIndex >= 0 ) && noder.focusable( element, hasTabindex );
         },
 
         'text': function(elm) {
@@ -4413,17 +5785,20 @@ define('skylark-utils/finder',[
         var ret = [],
             rootIsSelector = root && langx.isString(root);
         while ((node = node.parentNode) && (node.nodeType !== 9)) {
-            ret.push(node);
             if (root) {
                 if (rootIsSelector) {
                     if (matches(node, root)) {
+                        break;
+                    }
+                } else if (langx.isArrayLike(root)) {
+                    if (langx.inArray(node,root)>-1) {
                         break;
                     }
                 } else if (node == root) {
                     break;
                 }
             }
-
+            ret.push(node); // TODO
         }
 
         if (selector) {
@@ -4760,22 +6135,22 @@ define('skylark-utils/finder',[
 
         parent: parent,
 
-        previousSibling: previousSibling,
+        previousSibling,
 
-        previousSiblings: previousSiblings,
+        previousSiblings,
 
         pseudos: local.pseudos,
 
         siblings: siblings
     });
 
-    return skylark.finder = finder;
+    return dom.finder = finder;
 });
-define('skylark-utils/datax',[
-    "./skylark",
+define('skylark-utils-dom/datax',[
+    "./dom",
     "./langx",
     "./finder"
-], function(skylark, langx, finder) {
+], function(dom, langx, finder) {
     var map = Array.prototype.map,
         filter = Array.prototype.filter,
         camelCase = langx.camelCase,
@@ -4929,13 +6304,17 @@ define('skylark-utils/datax',[
      * @param {Array} names
      */
     function removeData(elm, names) {
-        if (langx.isString(names)) {
-            names = names.split(/\s+/);
+        if (names) {
+            if (langx.isString(names)) {
+                names = names.split(/\s+/);
+            }
+            var store = _store(elm, true);
+            names.forEach(function(name) {
+                delete store[name];
+            });            
+        } else {
+            cleanData(elm);
         }
-        var store = _store(elm, true);
-        names.forEach(function(name) {
-            delete store[name];
-        });
         return this;
     }
 
@@ -5019,13 +6398,26 @@ define('skylark-utils/datax',[
                 }));
                 return pluck(selectedOptions, "value");
             } else {
-                return elm.value;
+                if (/input|textarea/i.test(elm.tagName)) {
+                  return elm.value;
+                }
+                return text(elm);
             }
         } else {
-            elm.value = value;
+            if (/input|textarea/i.test(elm.tagName)) {
+              elm.value = value;
+            } else {
+              text(elm,value);
+            }
             return this;
         }
     }
+
+
+    finder.pseudos.data = function( elem, i, match,dataName ) {
+        return !!data( elem, dataName || match[3]);
+    };
+   
 
     function datax() {
         return datax;
@@ -5055,16 +6447,16 @@ define('skylark-utils/datax',[
         val: val
     });
 
-    return skylark.datax = datax;
+    return dom.datax = datax;
 });
-define('skylark-utils/eventer',[
-    "./skylark",
+define('skylark-utils-dom/eventer',[
+    "./dom",
     "./langx",
     "./browser",
     "./finder",
     "./noder",
     "./datax"
-], function(skylark, langx, browser, finder, noder, datax) {
+], function(dom, langx, browser, finder, noder, datax) {
     var mixin = langx.mixin,
         each = langx.each,
         slice = Array.prototype.slice,
@@ -5699,6 +7091,16 @@ define('skylark-utils/eventer',[
 
     }
 
+    if (browser.support.transition) {
+        specialEvents.transitionEnd = {
+//          handle: function (e) {
+//            if ($(e.target).is(this)) return e.handleObj.handler.apply(this, arguments)
+//          },
+          bindType: browser.support.transition.end,
+          delegateType: browser.support.transition.end
+        }        
+    }
+
     function eventer() {
         return eventer;
     }
@@ -5728,14 +7130,14 @@ define('skylark-utils/eventer',[
 
     });
 
-    return skylark.eventer = eventer;
+    return dom.eventer = eventer;
 });
-define('skylark-utils/geom',[
-    "./skylark",
+define('skylark-utils-dom/geom',[
+    "./dom",
     "./langx",
     "./noder",
     "./styler"
-], function(skylark, langx, noder, styler) {
+], function(dom, langx, noder, styler) {
     var rootNodeRE = /^(?:body|html)$/i,
         px = langx.toPixel,
         offsetParent = noder.offsetParent,
@@ -5772,7 +7174,14 @@ define('skylark-utils/geom',[
      * @param {HTMLElement} elm
      */
     function borderExtents(elm) {
-        var s = getComputedStyle(elm);
+        if (noder.isWindow(elm)) {
+            return {
+                left : 0,
+                top : 0,
+                right : 0,
+                bottom : 0
+            }
+        }        var s = getComputedStyle(elm);
         return {
             left: px(s.borderLeftWidth, elm),
             top: px(s.borderTopWidth, elm),
@@ -5964,6 +7373,14 @@ define('skylark-utils/geom',[
      * @param {HTMLElement} elm
      */
     function marginExtents(elm) {
+        if (noder.isWindow(elm)) {
+            return {
+                left : 0,
+                top : 0,
+                right : 0,
+                bottom : 0
+            }
+        }
         var s = getComputedStyle(elm);
         return {
             left: px(s.marginLeft),
@@ -5975,8 +7392,8 @@ define('skylark-utils/geom',[
 
 
     function marginRect(elm) {
-        var obj = this.relativeRect(elm),
-            me = this.marginExtents(elm);
+        var obj = relativeRect(elm),
+            me = marginExtents(elm);
 
         return {
             left: obj.left,
@@ -5988,8 +7405,8 @@ define('skylark-utils/geom',[
 
 
     function marginSize(elm) {
-        var obj = this.size(elm),
-            me = this.marginExtents(elm);
+        var obj = size(elm),
+            me = marginExtents(elm);
 
         return {
             width: obj.width + me.left + me.right,
@@ -6002,6 +7419,14 @@ define('skylark-utils/geom',[
      * @param {HTMLElement} elm
      */
     function paddingExtents(elm) {
+        if (noder.isWindow(elm)) {
+            return {
+                left : 0,
+                top : 0,
+                right : 0,
+                bottom : 0
+            }
+        }
         var s = getComputedStyle(elm);
         return {
             left: px(s.paddingLeft),
@@ -6173,6 +7598,9 @@ define('skylark-utils/geom',[
      * @param {Number} value
      */
     function scrollLeft(elm, value) {
+        if (elm.nodeType === 9) {
+            elm = elm.defaultView;
+        }
         var hasScrollLeft = "scrollLeft" in elm;
         if (value === undefined) {
             return hasScrollLeft ? elm.scrollLeft : elm.pageXOffset
@@ -6191,6 +7619,9 @@ define('skylark-utils/geom',[
      * @param {Number} value
      */
     function scrollTop(elm, value) {
+        if (elm.nodeType === 9) {
+            elm = elm.defaultView;
+        }
         var hasScrollTop = "scrollTop" in elm;
 
         if (value === undefined) {
@@ -6262,309 +7693,6 @@ define('skylark-utils/geom',[
             return this;
         }
     }
-    
-// in development start
-    function _place(/*DomNode*/ node, choices, layoutNode, aroundNodeCoords){
-        // summary:
-        //      Given a list of spots to put node, put it at the first spot where it fits,
-        //      of if it doesn't fit anywhere then the place with the least overflow
-        // choices: Array
-        //      Array of elements like: {corner: 'TL', pos: {x: 10, y: 20} }
-        //      Above example says to put the top-left corner of the node at (10,20)
-        // layoutNode: Function(node, aroundNodeCorner, nodeCorner, size)
-        //      for things like tooltip, they are displayed differently (and have different dimensions)
-        //      based on their orientation relative to the parent.   This adjusts the popup based on orientation.
-        //      It also passes in the available size for the popup, which is useful for tooltips to
-        //      tell them that their width is limited to a certain amount.   layoutNode() may return a value expressing
-        //      how much the popup had to be modified to fit into the available space.   This is used to determine
-        //      what the best placement is.
-        // aroundNodeCoords: Object
-        //      Size of aroundNode, ex: {w: 200, h: 50}
-
-        // get {x: 10, y: 10, w: 100, h:100} type obj representing position of
-        // viewport over document
-
-        var doc = noder.ownerDoc(node),
-            win = noder.ownerWindow(doc),
-            view = geom.size(win);
-
-        view.left = 0;
-        view.top = 0;
-
-        if(!node.parentNode || String(node.parentNode.tagName).toLowerCase() != "body"){
-            doc.body.appendChild(node);
-        }
-
-        var best = null;
-
-        some.apply(choices, function(choice){
-            var corner = choice.corner;
-            var pos = choice.pos;
-            var overflow = 0;
-
-            // calculate amount of space available given specified position of node
-            var spaceAvailable = {
-                w: {
-                    'L': view.left + view.width - pos.x,
-                    'R': pos.x - view.left,
-                    'M': view.width
-                }[corner.charAt(1)],
-
-                h: {
-                    'T': view.top + view.height - pos.y,
-                    'B': pos.y - view.top,
-                    'M': view.height
-                }[corner.charAt(0)]
-            };
-
-            if(layoutNode){
-                var res = layoutNode(node, choice.aroundCorner, corner, spaceAvailable, aroundNodeCoords);
-                overflow = typeof res == "undefined" ? 0 : res;
-            }
-
-            var bb = geom.size(node);
-
-            // coordinates and size of node with specified corner placed at pos,
-            // and clipped by viewport
-            var
-                startXpos = {
-                    'L': pos.x,
-                    'R': pos.x - bb.width,
-                    'M': Math.max(view.left, Math.min(view.left + view.width, pos.x + (bb.width >> 1)) - bb.width) // M orientation is more flexible
-                }[corner.charAt(1)],
-
-                startYpos = {
-                    'T': pos.y,
-                    'B': pos.y - bb.height,
-                    'M': Math.max(view.top, Math.min(view.top + view.height, pos.y + (bb.height >> 1)) - bb.height)
-                }[corner.charAt(0)],
-
-                startX = Math.max(view.left, startXpos),
-                startY = Math.max(view.top, startYpos),
-                endX = Math.min(view.left + view.width, startXpos + bb.width),
-                endY = Math.min(view.top + view.height, startYpos + bb.height),
-                width = endX - startX,
-                height = endY - startY;
-
-            overflow += (bb.width - width) + (bb.height - height);
-
-            if(best == null || overflow < best.overflow){
-                best = {
-                    corner: corner,
-                    aroundCorner: choice.aroundCorner,
-                    left: startX,
-                    top: startY,
-                    width: width,
-                    height: height,
-                    overflow: overflow,
-                    spaceAvailable: spaceAvailable
-                };
-            }
-
-            return !overflow;
-        });
-
-        // In case the best position is not the last one we checked, need to call
-        // layoutNode() again.
-        if(best.overflow && layoutNode){
-            layoutNode(node, best.aroundCorner, best.corner, best.spaceAvailable, aroundNodeCoords);
-        }
-
-
-        geom.boundingPosition(node,best);
-
-        return best;
-    }
-
-    function at(node, pos, corners, padding, layoutNode){
-        var choices = map.apply(corners, function(corner){
-            var c = {
-                corner: corner,
-                aroundCorner: reverse[corner],  // so TooltipDialog.orient() gets aroundCorner argument set
-                pos: {x: pos.x,y: pos.y}
-            };
-            if(padding){
-                c.pos.x += corner.charAt(1) == 'L' ? padding.x : -padding.x;
-                c.pos.y += corner.charAt(0) == 'T' ? padding.y : -padding.y;
-            }
-            return c;
-        });
-
-        return _place(node, choices, layoutNode);
-    }
-
-    function around(
-        /*DomNode*/     node,
-        /*DomNode|__Rectangle*/ anchor,
-        /*String[]*/    positions,
-        /*Boolean*/     leftToRight,
-        /*Function?*/   layoutNode){
-
-        // summary:
-        //      Position node adjacent or kitty-corner to anchor
-        //      such that it's fully visible in viewport.
-        // description:
-        //      Place node such that corner of node touches a corner of
-        //      aroundNode, and that node is fully visible.
-        // anchor:
-        //      Either a DOMNode or a rectangle (object with x, y, width, height).
-        // positions:
-        //      Ordered list of positions to try matching up.
-        //
-        //      - before: places drop down to the left of the anchor node/widget, or to the right in the case
-        //          of RTL scripts like Hebrew and Arabic; aligns either the top of the drop down
-        //          with the top of the anchor, or the bottom of the drop down with bottom of the anchor.
-        //      - after: places drop down to the right of the anchor node/widget, or to the left in the case
-        //          of RTL scripts like Hebrew and Arabic; aligns either the top of the drop down
-        //          with the top of the anchor, or the bottom of the drop down with bottom of the anchor.
-        //      - before-centered: centers drop down to the left of the anchor node/widget, or to the right
-        //          in the case of RTL scripts like Hebrew and Arabic
-        //      - after-centered: centers drop down to the right of the anchor node/widget, or to the left
-        //          in the case of RTL scripts like Hebrew and Arabic
-        //      - above-centered: drop down is centered above anchor node
-        //      - above: drop down goes above anchor node, left sides aligned
-        //      - above-alt: drop down goes above anchor node, right sides aligned
-        //      - below-centered: drop down is centered above anchor node
-        //      - below: drop down goes below anchor node
-        //      - below-alt: drop down goes below anchor node, right sides aligned
-        // layoutNode: Function(node, aroundNodeCorner, nodeCorner)
-        //      For things like tooltip, they are displayed differently (and have different dimensions)
-        //      based on their orientation relative to the parent.   This adjusts the popup based on orientation.
-        // leftToRight:
-        //      True if widget is LTR, false if widget is RTL.   Affects the behavior of "above" and "below"
-        //      positions slightly.
-        // example:
-        //  |   placeAroundNode(node, aroundNode, {'BL':'TL', 'TR':'BR'});
-        //      This will try to position node such that node's top-left corner is at the same position
-        //      as the bottom left corner of the aroundNode (ie, put node below
-        //      aroundNode, with left edges aligned).   If that fails it will try to put
-        //      the bottom-right corner of node where the top right corner of aroundNode is
-        //      (ie, put node above aroundNode, with right edges aligned)
-        //
-
-        // If around is a DOMNode (or DOMNode id), convert to coordinates.
-        var aroundNodePos;
-        if(typeof anchor == "string" || "offsetWidth" in anchor || "ownerSVGElement" in anchor){
-            aroundNodePos = domGeometry.position(anchor, true);
-
-            // For above and below dropdowns, subtract width of border so that popup and aroundNode borders
-            // overlap, preventing a double-border effect.  Unfortunately, difficult to measure the border
-            // width of either anchor or popup because in both cases the border may be on an inner node.
-            if(/^(above|below)/.test(positions[0])){
-                var anchorBorder = domGeometry.getBorderExtents(anchor),
-                    anchorChildBorder = anchor.firstChild ? domGeometry.getBorderExtents(anchor.firstChild) : {t:0,l:0,b:0,r:0},
-                    nodeBorder =  domGeometry.getBorderExtents(node),
-                    nodeChildBorder = node.firstChild ? domGeometry.getBorderExtents(node.firstChild) : {t:0,l:0,b:0,r:0};
-                aroundNodePos.y += Math.min(anchorBorder.t + anchorChildBorder.t, nodeBorder.t + nodeChildBorder.t);
-                aroundNodePos.h -=  Math.min(anchorBorder.t + anchorChildBorder.t, nodeBorder.t+ nodeChildBorder.t) +
-                    Math.min(anchorBorder.b + anchorChildBorder.b, nodeBorder.b + nodeChildBorder.b);
-            }
-        }else{
-            aroundNodePos = anchor;
-        }
-
-        // Compute position and size of visible part of anchor (it may be partially hidden by ancestor nodes w/scrollbars)
-        if(anchor.parentNode){
-            // ignore nodes between position:relative and position:absolute
-            var sawPosAbsolute = domStyle.getComputedStyle(anchor).position == "absolute";
-            var parent = anchor.parentNode;
-            while(parent && parent.nodeType == 1 && parent.nodeName != "BODY"){  //ignoring the body will help performance
-                var parentPos = domGeometry.position(parent, true),
-                    pcs = domStyle.getComputedStyle(parent);
-                if(/relative|absolute/.test(pcs.position)){
-                    sawPosAbsolute = false;
-                }
-                if(!sawPosAbsolute && /hidden|auto|scroll/.test(pcs.overflow)){
-                    var bottomYCoord = Math.min(aroundNodePos.y + aroundNodePos.h, parentPos.y + parentPos.h);
-                    var rightXCoord = Math.min(aroundNodePos.x + aroundNodePos.w, parentPos.x + parentPos.w);
-                    aroundNodePos.x = Math.max(aroundNodePos.x, parentPos.x);
-                    aroundNodePos.y = Math.max(aroundNodePos.y, parentPos.y);
-                    aroundNodePos.h = bottomYCoord - aroundNodePos.y;
-                    aroundNodePos.w = rightXCoord - aroundNodePos.x;
-                }
-                if(pcs.position == "absolute"){
-                    sawPosAbsolute = true;
-                }
-                parent = parent.parentNode;
-            }
-        }           
-
-        var x = aroundNodePos.x,
-            y = aroundNodePos.y,
-            width = "w" in aroundNodePos ? aroundNodePos.w : (aroundNodePos.w = aroundNodePos.width),
-            height = "h" in aroundNodePos ? aroundNodePos.h : (kernel.deprecated("place.around: dijit/place.__Rectangle: { x:"+x+", y:"+y+", height:"+aroundNodePos.height+", width:"+width+" } has been deprecated.  Please use { x:"+x+", y:"+y+", h:"+aroundNodePos.height+", w:"+width+" }", "", "2.0"), aroundNodePos.h = aroundNodePos.height);
-
-        // Convert positions arguments into choices argument for _place()
-        var choices = [];
-        function push(aroundCorner, corner){
-            choices.push({
-                aroundCorner: aroundCorner,
-                corner: corner,
-                pos: {
-                    x: {
-                        'L': x,
-                        'R': x + width,
-                        'M': x + (width >> 1)
-                    }[aroundCorner.charAt(1)],
-                    y: {
-                        'T': y,
-                        'B': y + height,
-                        'M': y + (height >> 1)
-                    }[aroundCorner.charAt(0)]
-                }
-            })
-        }
-        array.forEach(positions, function(pos){
-            var ltr =  leftToRight;
-            switch(pos){
-                case "above-centered":
-                    push("TM", "BM");
-                    break;
-                case "below-centered":
-                    push("BM", "TM");
-                    break;
-                case "after-centered":
-                    ltr = !ltr;
-                    // fall through
-                case "before-centered":
-                    push(ltr ? "ML" : "MR", ltr ? "MR" : "ML");
-                    break;
-                case "after":
-                    ltr = !ltr;
-                    // fall through
-                case "before":
-                    push(ltr ? "TL" : "TR", ltr ? "TR" : "TL");
-                    push(ltr ? "BL" : "BR", ltr ? "BR" : "BL");
-                    break;
-                case "below-alt":
-                    ltr = !ltr;
-                    // fall through
-                case "below":
-                    // first try to align left borders, next try to align right borders (or reverse for RTL mode)
-                    push(ltr ? "BL" : "BR", ltr ? "TL" : "TR");
-                    push(ltr ? "BR" : "BL", ltr ? "TR" : "TL");
-                    break;
-                case "above-alt":
-                    ltr = !ltr;
-                    // fall through
-                case "above":
-                    // first try to align left borders, next try to align right borders (or reverse for RTL mode)
-                    push(ltr ? "TL" : "TR", ltr ? "BL" : "BR");
-                    push(ltr ? "TR" : "TL", ltr ? "BR" : "BL");
-                    break;
-                default:
-                    // To assist dijit/_base/place, accept arguments of type {aroundCorner: "BL", corner: "TL"}.
-                    // Not meant to be used directly.  Remove for 2.0.
-                    push(pos.aroundCorner, pos.corner);
-            }
-        });
-
-        var position = _place(node, choices, layoutNode, {w: width, h: height});
-        position.aroundNodePos = aroundNodePos;
-
-        return position;
-    }
-// in development end
 
     function geom() {
         return geom;
@@ -6622,16 +7750,458 @@ define('skylark-utils/geom',[
         width: width
     });
 
-    return skylark.geom = geom;
+    ( function() {
+        var max = Math.max,
+            abs = Math.abs,
+            rhorizontal = /left|center|right/,
+            rvertical = /top|center|bottom/,
+            roffset = /[\+\-]\d+(\.[\d]+)?%?/,
+            rposition = /^\w+/,
+            rpercent = /%$/;
+
+        function getOffsets( offsets, width, height ) {
+            return [
+                parseFloat( offsets[ 0 ] ) * ( rpercent.test( offsets[ 0 ] ) ? width / 100 : 1 ),
+                parseFloat( offsets[ 1 ] ) * ( rpercent.test( offsets[ 1 ] ) ? height / 100 : 1 )
+            ];
+        }
+
+        function parseCss( element, property ) {
+            return parseInt( styler.css( element, property ), 10 ) || 0;
+        }
+
+        function getDimensions( raw ) {
+            if ( raw.nodeType === 9 ) {
+                return {
+                    size: size(raw),
+                    offset: { top: 0, left: 0 }
+                };
+            }
+            if ( noder.isWindow( raw ) ) {
+                return {
+                    size: size(raw),
+                    offset: { 
+                        top: scrollTop(raw), 
+                        left: scrollLeft(raw) 
+                    }
+                };
+            }
+            if ( raw.preventDefault ) {
+                return {
+                    size : {
+                        width: 0,
+                        height: 0
+                    },
+                    offset: { 
+                        top: raw.pageY, 
+                        left: raw.pageX 
+                    }
+                };
+            }
+            return {
+                size: size(raw),
+                offset: pagePosition(raw)
+            };
+        }
+
+        function getScrollInfo( within ) {
+            var overflowX = within.isWindow || within.isDocument ? "" :
+                    styler.css(within.element,"overflow-x" ),
+                overflowY = within.isWindow || within.isDocument ? "" :
+                    styler.css(within.element,"overflow-y" ),
+                hasOverflowX = overflowX === "scroll" ||
+                    ( overflowX === "auto" && within.width < scrollWidth(within.element) ),
+                hasOverflowY = overflowY === "scroll" ||
+                    ( overflowY === "auto" && within.height < scrollHeight(within.element));
+            return {
+                width: hasOverflowY ? scrollbarWidth() : 0,
+                height: hasOverflowX ? scrollbarWidth() : 0
+            };
+        }
+
+        function getWithinInfo( element ) {
+            var withinElement = element || window,
+                isWindow = noder.isWindow( withinElement),
+                isDocument = !!withinElement && withinElement.nodeType === 9,
+                hasOffset = !isWindow && !isDocument,
+                msize = marginSize(withinElement);
+            return {
+                element: withinElement,
+                isWindow: isWindow,
+                isDocument: isDocument,
+                offset: hasOffset ? pagePosition(element) : { left: 0, top: 0 },
+                scrollLeft: scrollLeft(withinElement),
+                scrollTop: scrollTop(withinElement),
+                width: msize.width,
+                height: msize.height
+            };
+        }
+
+        function posit(elm,options ) {
+            // Make a copy, we don't want to modify arguments
+            options = langx.extend( {}, options );
+
+            var atOffset, targetWidth, targetHeight, targetOffset, basePosition, dimensions,
+                target = options.of,
+                within = getWithinInfo( options.within ),
+                scrollInfo = getScrollInfo( within ),
+                collision = ( options.collision || "flip" ).split( " " ),
+                offsets = {};
+
+            dimensions = getDimensions( target );
+            if ( target.preventDefault ) {
+
+                // Force left top to allow flipping
+                options.at = "left top";
+            }
+            targetWidth = dimensions.size.width;
+            targetHeight = dimensions.size.height;
+            targetOffset = dimensions.offset;
+
+            // Clone to reuse original targetOffset later
+            basePosition = langx.extend( {}, targetOffset );
+
+            // Force my and at to have valid horizontal and vertical positions
+            // if a value is missing or invalid, it will be converted to center
+            langx.each( [ "my", "at" ], function() {
+                var pos = ( options[ this ] || "" ).split( " " ),
+                    horizontalOffset,
+                    verticalOffset;
+
+                if ( pos.length === 1 ) {
+                    pos = rhorizontal.test( pos[ 0 ] ) ?
+                        pos.concat( [ "center" ] ) :
+                        rvertical.test( pos[ 0 ] ) ?
+                            [ "center" ].concat( pos ) :
+                            [ "center", "center" ];
+                }
+                pos[ 0 ] = rhorizontal.test( pos[ 0 ] ) ? pos[ 0 ] : "center";
+                pos[ 1 ] = rvertical.test( pos[ 1 ] ) ? pos[ 1 ] : "center";
+
+                // Calculate offsets
+                horizontalOffset = roffset.exec( pos[ 0 ] );
+                verticalOffset = roffset.exec( pos[ 1 ] );
+                offsets[ this ] = [
+                    horizontalOffset ? horizontalOffset[ 0 ] : 0,
+                    verticalOffset ? verticalOffset[ 0 ] : 0
+                ];
+
+                // Reduce to just the positions without the offsets
+                options[ this ] = [
+                    rposition.exec( pos[ 0 ] )[ 0 ],
+                    rposition.exec( pos[ 1 ] )[ 0 ]
+                ];
+            } );
+
+            // Normalize collision option
+            if ( collision.length === 1 ) {
+                collision[ 1 ] = collision[ 0 ];
+            }
+
+            if ( options.at[ 0 ] === "right" ) {
+                basePosition.left += targetWidth;
+            } else if ( options.at[ 0 ] === "center" ) {
+                basePosition.left += targetWidth / 2;
+            }
+
+            if ( options.at[ 1 ] === "bottom" ) {
+                basePosition.top += targetHeight;
+            } else if ( options.at[ 1 ] === "center" ) {
+                basePosition.top += targetHeight / 2;
+            }
+
+            atOffset = getOffsets( offsets.at, targetWidth, targetHeight );
+            basePosition.left += atOffset[ 0 ];
+            basePosition.top += atOffset[ 1 ];
+
+            return ( function(elem) {
+                var collisionPosition, using,
+                    msize = marginSize(elem),
+                    elemWidth = msize.width,
+                    elemHeight = msize.height,
+                    marginLeft = parseCss( elem, "marginLeft" ),
+                    marginTop = parseCss( elem, "marginTop" ),
+                    collisionWidth = elemWidth + marginLeft + parseCss( elem, "marginRight" ) +
+                        scrollInfo.width,
+                    collisionHeight = elemHeight + marginTop + parseCss( elem, "marginBottom" ) +
+                        scrollInfo.height,
+                    position = langx.extend( {}, basePosition ),
+                    myOffset = getOffsets( offsets.my, msize.width, msize.height);
+
+                if ( options.my[ 0 ] === "right" ) {
+                    position.left -= elemWidth;
+                } else if ( options.my[ 0 ] === "center" ) {
+                    position.left -= elemWidth / 2;
+                }
+
+                if ( options.my[ 1 ] === "bottom" ) {
+                    position.top -= elemHeight;
+                } else if ( options.my[ 1 ] === "center" ) {
+                    position.top -= elemHeight / 2;
+                }
+
+                position.left += myOffset[ 0 ];
+                position.top += myOffset[ 1 ];
+
+                collisionPosition = {
+                    marginLeft: marginLeft,
+                    marginTop: marginTop
+                };
+
+                langx.each( [ "left", "top" ], function( i, dir ) {
+                    if ( positions[ collision[ i ] ] ) {
+                        positions[ collision[ i ] ][ dir ]( position, {
+                            targetWidth: targetWidth,
+                            targetHeight: targetHeight,
+                            elemWidth: elemWidth,
+                            elemHeight: elemHeight,
+                            collisionPosition: collisionPosition,
+                            collisionWidth: collisionWidth,
+                            collisionHeight: collisionHeight,
+                            offset: [ atOffset[ 0 ] + myOffset[ 0 ], atOffset [ 1 ] + myOffset[ 1 ] ],
+                            my: options.my,
+                            at: options.at,
+                            within: within,
+                            elem: elem
+                        } );
+                    }
+                } );
+
+                if ( options.using ) {
+
+                    // Adds feedback as second argument to using callback, if present
+                    using = function( props ) {
+                        var left = targetOffset.left - position.left,
+                            right = left + targetWidth - elemWidth,
+                            top = targetOffset.top - position.top,
+                            bottom = top + targetHeight - elemHeight,
+                            feedback = {
+                                target: {
+                                    element: target,
+                                    left: targetOffset.left,
+                                    top: targetOffset.top,
+                                    width: targetWidth,
+                                    height: targetHeight
+                                },
+                                element: {
+                                    element: elem,
+                                    left: position.left,
+                                    top: position.top,
+                                    width: elemWidth,
+                                    height: elemHeight
+                                },
+                                horizontal: right < 0 ? "left" : left > 0 ? "right" : "center",
+                                vertical: bottom < 0 ? "top" : top > 0 ? "bottom" : "middle"
+                            };
+                        if ( targetWidth < elemWidth && abs( left + right ) < targetWidth ) {
+                            feedback.horizontal = "center";
+                        }
+                        if ( targetHeight < elemHeight && abs( top + bottom ) < targetHeight ) {
+                            feedback.vertical = "middle";
+                        }
+                        if ( max( abs( left ), abs( right ) ) > max( abs( top ), abs( bottom ) ) ) {
+                            feedback.important = "horizontal";
+                        } else {
+                            feedback.important = "vertical";
+                        }
+                        options.using.call( this, props, feedback );
+                    };
+                }
+
+                pagePosition(elem, langx.extend( position, { using: using } ));
+            })(elm);
+        }
+
+        var positions = {
+            fit: {
+                left: function( position, data ) {
+                    var within = data.within,
+                        withinOffset = within.isWindow ? within.scrollLeft : within.offset.left,
+                        outerWidth = within.width,
+                        collisionPosLeft = position.left - data.collisionPosition.marginLeft,
+                        overLeft = withinOffset - collisionPosLeft,
+                        overRight = collisionPosLeft + data.collisionWidth - outerWidth - withinOffset,
+                        newOverRight;
+
+                    // Element is wider than within
+                    if ( data.collisionWidth > outerWidth ) {
+
+                        // Element is initially over the left side of within
+                        if ( overLeft > 0 && overRight <= 0 ) {
+                            newOverRight = position.left + overLeft + data.collisionWidth - outerWidth -
+                                withinOffset;
+                            position.left += overLeft - newOverRight;
+
+                        // Element is initially over right side of within
+                        } else if ( overRight > 0 && overLeft <= 0 ) {
+                            position.left = withinOffset;
+
+                        // Element is initially over both left and right sides of within
+                        } else {
+                            if ( overLeft > overRight ) {
+                                position.left = withinOffset + outerWidth - data.collisionWidth;
+                            } else {
+                                position.left = withinOffset;
+                            }
+                        }
+
+                    // Too far left -> align with left edge
+                    } else if ( overLeft > 0 ) {
+                        position.left += overLeft;
+
+                    // Too far right -> align with right edge
+                    } else if ( overRight > 0 ) {
+                        position.left -= overRight;
+
+                    // Adjust based on position and margin
+                    } else {
+                        position.left = max( position.left - collisionPosLeft, position.left );
+                    }
+                },
+                top: function( position, data ) {
+                    var within = data.within,
+                        withinOffset = within.isWindow ? within.scrollTop : within.offset.top,
+                        outerHeight = data.within.height,
+                        collisionPosTop = position.top - data.collisionPosition.marginTop,
+                        overTop = withinOffset - collisionPosTop,
+                        overBottom = collisionPosTop + data.collisionHeight - outerHeight - withinOffset,
+                        newOverBottom;
+
+                    // Element is taller than within
+                    if ( data.collisionHeight > outerHeight ) {
+
+                        // Element is initially over the top of within
+                        if ( overTop > 0 && overBottom <= 0 ) {
+                            newOverBottom = position.top + overTop + data.collisionHeight - outerHeight -
+                                withinOffset;
+                            position.top += overTop - newOverBottom;
+
+                        // Element is initially over bottom of within
+                        } else if ( overBottom > 0 && overTop <= 0 ) {
+                            position.top = withinOffset;
+
+                        // Element is initially over both top and bottom of within
+                        } else {
+                            if ( overTop > overBottom ) {
+                                position.top = withinOffset + outerHeight - data.collisionHeight;
+                            } else {
+                                position.top = withinOffset;
+                            }
+                        }
+
+                    // Too far up -> align with top
+                    } else if ( overTop > 0 ) {
+                        position.top += overTop;
+
+                    // Too far down -> align with bottom edge
+                    } else if ( overBottom > 0 ) {
+                        position.top -= overBottom;
+
+                    // Adjust based on position and margin
+                    } else {
+                        position.top = max( position.top - collisionPosTop, position.top );
+                    }
+                }
+            },
+            flip: {
+                left: function( position, data ) {
+                    var within = data.within,
+                        withinOffset = within.offset.left + within.scrollLeft,
+                        outerWidth = within.width,
+                        offsetLeft = within.isWindow ? within.scrollLeft : within.offset.left,
+                        collisionPosLeft = position.left - data.collisionPosition.marginLeft,
+                        overLeft = collisionPosLeft - offsetLeft,
+                        overRight = collisionPosLeft + data.collisionWidth - outerWidth - offsetLeft,
+                        myOffset = data.my[ 0 ] === "left" ?
+                            -data.elemWidth :
+                            data.my[ 0 ] === "right" ?
+                                data.elemWidth :
+                                0,
+                        atOffset = data.at[ 0 ] === "left" ?
+                            data.targetWidth :
+                            data.at[ 0 ] === "right" ?
+                                -data.targetWidth :
+                                0,
+                        offset = -2 * data.offset[ 0 ],
+                        newOverRight,
+                        newOverLeft;
+
+                    if ( overLeft < 0 ) {
+                        newOverRight = position.left + myOffset + atOffset + offset + data.collisionWidth -
+                            outerWidth - withinOffset;
+                        if ( newOverRight < 0 || newOverRight < abs( overLeft ) ) {
+                            position.left += myOffset + atOffset + offset;
+                        }
+                    } else if ( overRight > 0 ) {
+                        newOverLeft = position.left - data.collisionPosition.marginLeft + myOffset +
+                            atOffset + offset - offsetLeft;
+                        if ( newOverLeft > 0 || abs( newOverLeft ) < overRight ) {
+                            position.left += myOffset + atOffset + offset;
+                        }
+                    }
+                },
+                top: function( position, data ) {
+                    var within = data.within,
+                        withinOffset = within.offset.top + within.scrollTop,
+                        outerHeight = within.height,
+                        offsetTop = within.isWindow ? within.scrollTop : within.offset.top,
+                        collisionPosTop = position.top - data.collisionPosition.marginTop,
+                        overTop = collisionPosTop - offsetTop,
+                        overBottom = collisionPosTop + data.collisionHeight - outerHeight - offsetTop,
+                        top = data.my[ 1 ] === "top",
+                        myOffset = top ?
+                            -data.elemHeight :
+                            data.my[ 1 ] === "bottom" ?
+                                data.elemHeight :
+                                0,
+                        atOffset = data.at[ 1 ] === "top" ?
+                            data.targetHeight :
+                            data.at[ 1 ] === "bottom" ?
+                                -data.targetHeight :
+                                0,
+                        offset = -2 * data.offset[ 1 ],
+                        newOverTop,
+                        newOverBottom;
+                    if ( overTop < 0 ) {
+                        newOverBottom = position.top + myOffset + atOffset + offset + data.collisionHeight -
+                            outerHeight - withinOffset;
+                        if ( newOverBottom < 0 || newOverBottom < abs( overTop ) ) {
+                            position.top += myOffset + atOffset + offset;
+                        }
+                    } else if ( overBottom > 0 ) {
+                        newOverTop = position.top - data.collisionPosition.marginTop + myOffset + atOffset +
+                            offset - offsetTop;
+                        if ( newOverTop > 0 || abs( newOverTop ) < overBottom ) {
+                            position.top += myOffset + atOffset + offset;
+                        }
+                    }
+                }
+            },
+            flipfit: {
+                left: function() {
+                    positions.flip.left.apply( this, arguments );
+                    positions.fit.left.apply( this, arguments );
+                },
+                top: function() {
+                    positions.flip.top.apply( this, arguments );
+                    positions.fit.top.apply( this, arguments );
+                }
+            }
+        };
+
+        geom.posit = posit;
+    })();
+
+    return dom.geom = geom;
 });
-define('skylark-utils/fx',[
-    "./skylark",
+define('skylark-utils-dom/fx',[
+    "./dom",
     "./langx",
     "./browser",
     "./geom",
     "./styler",
     "./eventer"
-], function(skylark, langx, browser, geom, styler, eventer) {
+], function(dom, langx, browser, geom, styler, eventer) {
     var animationName,
         animationDuration,
         animationTiming,
@@ -6679,7 +8249,8 @@ define('skylark-utils/fx',[
             endEvent,
             wrappedCallback,
             fired = false,
-            hasScrollTop = false;
+            hasScrollTop = false,
+            resetClipAuto = false;
 
         if (langx.isPlainObject(duration)) {
             ease = duration.easing;
@@ -6721,13 +8292,24 @@ define('skylark-utils/fx',[
         } else {
             // CSS transitions
             for (key in properties) {
+                var v = properties[key];
                 if (supportedTransforms.test(key)) {
-                    transforms += key + "(" + properties[key] + ") ";
+                    transforms += key + "(" + v + ") ";
                 } else {
                     if (key === "scrollTop") {
                         hasScrollTop = true;
                     }
-                    cssValues[key] = properties[key];
+                    if (key == "clip" && langx.isPlainObject(v)) {
+                        cssValues[key] = "rect(" + v.top+"px,"+ v.right +"px,"+ v.bottom +"px,"+ v.left+"px)";
+                        if (styler.css(elm,"clip") == "auto") {
+                            var size = geom.size(elm);
+                            styler.css(elm,"clip","rect("+"0px,"+ size.width +"px,"+ size.height +"px,"+"0px)");  
+                            resetClipAuto = true;
+                        }
+
+                    } else {
+                        cssValues[key] = v;
+                    }
                     cssProperties.push(langx.dasherize(key));
                 }
             }
@@ -6757,6 +8339,9 @@ define('skylark-utils/fx',[
                 eventer.off(elm, animationEnd, wrappedCallback) // triggered by setTimeout
             }
             styler.css(elm, cssReset);
+            if (resetClipAuto) {
+ //               styler.css(elm,"clip","auto");
+            }
             callback && callback.call(this);
         };
 
@@ -6794,7 +8379,7 @@ define('skylark-utils/fx',[
     }
 
     /*   
-     * Display the matched elements.
+     * Display an element.
      * @param {Object} elm  
      * @param {String} speed
      * @param {Function} callback
@@ -6814,7 +8399,7 @@ define('skylark-utils/fx',[
 
 
     /*   
-     * Hide the matched elements.
+     * Hide an element.
      * @param {Object} elm  
      * @param {String} speed
      * @param {Function} callback
@@ -6838,7 +8423,7 @@ define('skylark-utils/fx',[
     }
 
     /*   
-     * Get the current vertical position of the scroll bar for the first element in the set of matched elements or set the vertical position of the scroll bar for every matched element.
+     * Set the vertical position of the scroll bar for an element.
      * @param {Object} elm  
      * @param {Number or String} pos
      * @param {Number or String} speed
@@ -6864,7 +8449,7 @@ define('skylark-utils/fx',[
     }
 
     /*   
-     * Display or hide the matched elements.
+     * Display or hide an element.
      * @param {Object} elm  
      * @param {Number or String} speed
      * @param {Function} callback
@@ -6879,7 +8464,7 @@ define('skylark-utils/fx',[
     }
 
     /*   
-     * Adjust the opacity of the matched elements.
+     * Adjust the opacity of an element.
      * @param {Object} elm  
      * @param {Number or String} speed
      * @param {Number or String} opacity
@@ -6893,7 +8478,7 @@ define('skylark-utils/fx',[
 
 
     /*   
-     * Display the matched elements by fading them to opaque.
+     * Display an element by fading them to opaque.
      * @param {Object} elm  
      * @param {Number or String} speed
      * @param {String} easing
@@ -6914,7 +8499,7 @@ define('skylark-utils/fx',[
     }
 
     /*   
-     * Hide the matched elements by fading them to transparent.
+     * Hide an element by fading them to transparent.
      * @param {Object} elm  
      * @param {Number or String} speed
      * @param {String} easing
@@ -6923,6 +8508,7 @@ define('skylark-utils/fx',[
     function fadeOut(elm, speed, easing, callback) {
         var _elm = elm,
             complete,
+            opacity = styler.css(elm,"opacity"),
             options = {};
 
         if (langx.isPlainObject(speed)) {
@@ -6939,6 +8525,7 @@ define('skylark-utils/fx',[
             }
         }
         options.complete = function() {
+            styler.css(elm,"opacity",opacity);
             styler.hide(elm);
             if (complete) {
                 complete.call(elm);
@@ -6951,7 +8538,7 @@ define('skylark-utils/fx',[
     }
 
     /*   
-     * Display or hide the matched elements by animating their opacity.
+     * Display or hide an element by animating its opacity.
      * @param {Object} elm  
      * @param {Number or String} speed
      * @param {String} ceasing
@@ -6967,7 +8554,7 @@ define('skylark-utils/fx',[
     }
 
     /*   
-     * Display the matched elements with a sliding motion.
+     * Display an element with a sliding motion.
      * @param {Object} elm  
      * @param {Number or String} duration
      * @param {Function} callback
@@ -7022,10 +8609,10 @@ define('skylark-utils/fx',[
         });
 
         return this;
-    };
+    }
 
     /*   
-     * Hide the matched elements with a sliding motion.
+     * Hide an element with a sliding motion.
      * @param {Object} elm  
      * @param {Number or String} duration
      * @param {Function} callback
@@ -7084,11 +8671,11 @@ define('skylark-utils/fx',[
             });
         }
         return this;
-    };
+    }
 
 
     /*   
-     * Display or hide the matched elements with a sliding motion.
+     * Display or hide an element with a sliding motion.
      * @param {Object} elm  
      * @param {Number or String} duration
      * @param {Function} callback
@@ -7104,8 +8691,22 @@ define('skylark-utils/fx',[
             slideUp(elm, duration, callback);
         }
         return this;
-    };
+    }
 
+    function emulateTransitionEnd(elm,duration) {
+        var called = false;
+        eventer.one(elm,'transitionEnd', function () { 
+            called = true;
+        })
+        var callback = function () { 
+            if (!called) {
+                eventer.trigger(elm,browser.support.transition.end) 
+            }
+        };
+        setTimeout(callback, duration);
+        
+        return this;
+    } 
 
     function fx() {
         return fx;
@@ -7120,25 +8721,26 @@ define('skylark-utils/fx',[
             slow: 600
         },
 
-        animate: animate,
-        fadeIn: fadeIn,
-        fadeOut: fadeOut,
-        fadeTo: fadeTo,
-        fadeToggle: fadeToggle,
-        hide: hide,
-        scrollToTop: scrollToTop,
+        animate,
+        emulateTransitionEnd,
+        fadeIn,
+        fadeOut,
+        fadeTo,
+        fadeToggle,
+        hide,
+        scrollToTop,
 
-        slideDown: slideDown,
-        slideToggle: slideToggle,
-        slideUp: slideUp,
-        show: show,
-        toggle: toggle
+        slideDown,
+        slideToggle,
+        slideUp,
+        show,
+        toggle
     });
 
-    return skylark.fx = fx;
+    return dom.fx = fx;
 });
-define('skylark-utils/query',[
-    "./skylark",
+define('skylark-utils-dom/query',[
+    "./dom",
     "./langx",
     "./noder",
     "./datax",
@@ -7147,7 +8749,7 @@ define('skylark-utils/query',[
     "./geom",
     "./styler",
     "./fx"
-], function(skylark, langx, noder, datax, eventer, finder, geom, styler, fx) {
+], function(dom, langx, noder, datax, eventer, finder, geom, styler, fx) {
     var some = Array.prototype.some,
         push = Array.prototype.push,
         every = Array.prototype.every,
@@ -7192,10 +8794,10 @@ define('skylark-utils/query',[
         return function() {
             var self = this,
                 params = slice.call(arguments);
-            var result = $.map(self, function(elem, idx) {
+            var result = langx.map(self, function(elem, idx) {
                 return func.apply(context, [elem].concat(params));
             });
-            return $(uniq(result));
+            return query(uniq(result));
         }
     }
 
@@ -7205,9 +8807,9 @@ define('skylark-utils/query',[
                 params = slice.call(arguments);
             var result = this.map(function(idx, elem) {
                 // if (elem.nodeType == 1) {
-                if (elem.querySelector) {
+                //if (elem.querySelector) {
                     return func.apply(context, last ? [elem] : [elem, selector]);
-                }
+                //}
             });
             if (last && selector) {
                 return result.filter(selector);
@@ -7221,15 +8823,15 @@ define('skylark-utils/query',[
         return function(util, selector) {
             var self = this,
                 params = slice.call(arguments);
-            if (selector === undefined) {
-                selector = util;
-                util = undefined;
-            }
+            //if (selector === undefined) { //TODO : needs confirm?
+            //    selector = util;
+            //    util = undefined;
+            //}
             var result = this.map(function(idx, elem) {
-                // if (elem.nodeType == 1) {
-                if (elem.querySelector) {
+                // if (elem.nodeType == 1) { // TODO
+                //if (elem.querySelector) {
                     return func.apply(context, last ? [elem, util] : [elem, selector, util]);
-                }
+                //}
             });
             if (last && selector) {
                 return result.filter(selector);
@@ -7244,7 +8846,7 @@ define('skylark-utils/query',[
         return function() {
             var self = this,
                 params = slice.call(arguments);
-            this.each(function(idx) {
+            this.each(function(idx,node) {
                 func.apply(context, [this].concat(params));
             });
             return self;
@@ -7368,7 +8970,7 @@ define('skylark-utils/query',[
                         nodes = finder.descendants(context, selector);
                     }
                 } else {
-                    if (isArray(selector)) {
+                    if (selector !== window && isArrayLike(selector)) {
                         // a dom node array is expected
                         nodes = selector;
                     } else {
@@ -7463,7 +9065,16 @@ define('skylark-utils/query',[
                 return this.length
             },
 
-            remove: wrapper_every_act(noder.remove, noder),
+            //remove: wrapper_every_act(noder.remove, noder),
+            remove : function(selector) {
+                if (selector) {
+                    return this.find(selector).remove();
+                }
+                this.each(function(i,node){
+                    noder.remove(node);
+                });
+                return this;
+            },
 
             each: function(callback) {
                 langx.each(this, callback);
@@ -7504,8 +9115,8 @@ define('skylark-utils/query',[
             not: function(selector) {
                 var nodes = []
                 if (isFunction(selector) && selector.call !== undefined)
-                    this.each(function(idx) {
-                        if (!selector.call(this, idx)) nodes.push(this)
+                    this.each(function(idx,node) {
+                        if (!selector.call(this, idx,node)) nodes.push(this)
                     })
                 else {
                     var excludes = typeof selector == 'string' ? this.filter(selector) :
@@ -7578,8 +9189,6 @@ define('skylark-utils/query',[
                 return ret;
             },
             
-            show: wrapper_every_act(fx.show, fx),
-
             replaceWith: function(newContent) {
                 return this.before(newContent).remove();
             },
@@ -7590,9 +9199,9 @@ define('skylark-utils/query',[
                     var dom = $(structure).get(0),
                         clone = dom.parentNode || this.length > 1
 
-                return this.each(function(index) {
+                return this.each(function(index,node) {
                     $(this).wrapAll(
-                        func ? structure.call(this, index) :
+                        func ? structure.call(this, index,node) :
                         clone ? dom.cloneNode(true) : dom
                     )
                 })
@@ -7613,10 +9222,10 @@ define('skylark-utils/query',[
 
             wrapInner: function(wrappingElement) {
                 var func = isFunction(wrappingElement)
-                return this.each(function(index) {
+                return this.each(function(index,node) {
                     var self = $(this),
                         contents = self.contents(),
-                        dom = func ? wrappingElement.call(this, index) : wrappingElement
+                        dom = func ? wrappingElement.call(this, index,node) : wrappingElement
                     contents.length ? contents.wrapAll(dom) : self.append(dom)
                 })
             },
@@ -7654,7 +9263,7 @@ define('skylark-utils/query',[
                 return $(this.pluck('previousElementSibling')).filter(selector || '*')
             },
 
-            prevAll: wrapper_selector(finder.previousSibling, finder),
+            prevAll: wrapper_selector(finder.previousSiblings, finder),
 
             next: function(selector) {
                 return $(this.pluck('nextElementSibling')).filter(selector || '*')
@@ -7712,12 +9321,23 @@ define('skylark-utils/query',[
 
             scrollLeft: wrapper_value(geom.scrollLeft, geom),
 
-            position: function() {
+            position: function(options) {
                 if (!this.length) return
 
-                var elem = this[0];
+                if (options) {
+                    if (options.of && options.of.length) {
+                        options = langx.clone(options);
+                        options.of = options.of[0];
+                    }
+                    return this.each( function() {
+                        geom.posit(this,options);
+                    });
+                } else {
+                    var elem = this[0];
 
-                return geom.relativePosition(elem);
+                    return geom.relativePosition(elem);
+
+                }             
             },
 
             offsetParent: wrapper_map(geom.offsetParent, geom)
@@ -7792,14 +9412,13 @@ define('skylark-utils/query',[
 
         $.fn.innerHeight = wrapper_value(geom.clientHeight, geom, geom.clientHeight);
 
-
         var traverseNode = noder.traverse;
 
         function wrapper_node_operation(func, context, oldValueFunc) {
             return function(html) {
                 var argType, nodes = langx.map(arguments, function(arg) {
                     argType = type(arg)
-                    return argType == "object" || argType == "array" || arg == null ?
+                    return argType == "function" || argType == "object" || argType == "array" || arg == null ?
                         arg : noder.createFragment(arg)
                 });
                 if (nodes.length < 1) {
@@ -7885,17 +9504,15 @@ define('skylark-utils/query',[
 
         $.fn.trigger = wrapper_every_act(eventer.trigger, eventer);
 
-
         ('focusin focusout focus blur load resize scroll unload click dblclick ' +
             'mousedown mouseup mousemove mouseover mouseout mouseenter mouseleave ' +
-            'change select keydown keypress keyup error').split(' ').forEach(function(event) {
+            'change select keydown keypress keyup error transitionEnd').split(' ').forEach(function(event) {
             $.fn[event] = function(data, callback) {
                 return (0 in arguments) ?
                     this.on(event, data, callback) :
                     this.trigger(event)
             }
         });
-
 
         $.fn.one = function(event, selector, data, callback) {
             if (!langx.isString(selector) && !langx.isFunction(callback)) {
@@ -7913,6 +9530,7 @@ define('skylark-utils/query',[
         };
 
         $.fn.animate = wrapper_every_act(fx.animate, fx);
+        $.fn.emulateTransitionEnd = wrapper_every_act(fx.emulateTransitionEnd, fx);
 
         $.fn.show = wrapper_every_act(fx.show, fx);
         $.fn.hide = wrapper_every_act(fx.hide, fx);
@@ -7925,6 +9543,24 @@ define('skylark-utils/query',[
         $.fn.slideDown = wrapper_every_act(fx.slideDown, fx);
         $.fn.slideToggle = wrapper_every_act(fx.slideToggle, fx);
         $.fn.slideUp = wrapper_every_act(fx.slideUp, fx);
+
+        $.fn.scrollParent = function( includeHidden ) {
+            var position = this.css( "position" ),
+                excludeStaticParent = position === "absolute",
+                overflowRegex = includeHidden ? /(auto|scroll|hidden)/ : /(auto|scroll)/,
+                scrollParent = this.parents().filter( function() {
+                    var parent = $( this );
+                    if ( excludeStaticParent && parent.css( "position" ) === "static" ) {
+                        return false;
+                    }
+                    return overflowRegex.test( parent.css( "overflow" ) + parent.css( "overflow-y" ) +
+                        parent.css( "overflow-x" ) );
+                } ).eq( 0 );
+
+            return position === "fixed" || !scrollParent.length ?
+                $( this[ 0 ].ownerDocument || document ) :
+                scrollParent;
+        };
     })(query);
 
 
@@ -7949,7 +9585,7 @@ define('skylark-utils/query',[
             }
         }
 
-        'filter,add,not,eq,first,last,find,closest,parents,parent,children,siblings'.split(',').forEach(function(property) {
+        'filter,add,not,eq,first,last,find,closest,parents,parent,children,siblings,prev,prevAll,next,nextAll'.split(',').forEach(function(property) {
             var fn = $.fn[property]
             $.fn[property] = function() {
                 var ret = fn.apply(this, arguments)
@@ -8025,13 +9661,46 @@ define('skylark-utils/query',[
             return this;
         };
 
+        $.fn.replaceClass = function(newClass, oldClass) {
+            this.removeClass(oldClass);
+            this.addClass(newClass);
+            return this;
+        };
+
+        $.fn.disableSelection = ( function() {
+            var eventType = "onselectstart" in document.createElement( "div" ) ?
+                "selectstart" :
+                "mousedown";
+
+            return function() {
+                return this.on( eventType + ".ui-disableSelection", function( event ) {
+                    event.preventDefault();
+                } );
+            };
+        } )();
+
+        $.fn.enableSelection = function() {
+            return this.off( ".ui-disableSelection" );
+        };
+       
+
     })(query);
 
+    query.fn.plugin = function(name,options) {
+        var args = slice.call( arguments, 1 ),
+            self = this,
+            returnValue = this;
 
-    return skylark.query = query;
+        this.each(function(){
+            returnValue = plugins.instantiate.apply(self,[this,name].concat(args));
+        });
+        return returnValue;
+    };
+
+    return dom.query = query;
 
 });
-define('skylark-utils-color/colors',[
+define('skylark-data-color/colors',[
     "skylark-langx/skylark",
     "skylark-langx/langx"
 ],function(skylark,langx) {
@@ -8662,11 +10331,11 @@ define('skylark-utils-color/colors',[
 
     });
 
-    return colors;
+    return skylark.attach("data.colors",colors);
 
 });
 
-define('skylark-utils-color/Color',[
+define('skylark-data-color/Color',[
     "skylark-langx/langx",
     "./colors"
 ],function(langx,colors) {
@@ -9207,21 +10876,14 @@ define('skylark-utils-color/Color',[
 	return Color;
 });
 
-/**
- * skylark-ui-swt - A version of ui-swt that ported to running on skylarkjs
- * @author Hudaokeji, Inc.
- * @version v0.9.0
- * @link https://github.com/skylarkui/skylark-ui-swt/
- * @license MIT
- */
-define('skylark-ui-swt/ui',[
-  "skylark-utils/skylark",
-  "skylark-utils/langx",
-  "skylark-utils/browser",
-  "skylark-utils/eventer",
-  "skylark-utils/noder",
-  "skylark-utils/geom",
-  "skylark-utils/query"
+define('skylark-ui-swt/swt',[
+  "skylark-langx/skylark",
+  "skylark-langx/langx",
+  "skylark-utils-dom/browser",
+  "skylark-utils-dom/eventer",
+  "skylark-utils-dom/noder",
+  "skylark-utils-dom/geom",
+  "skylark-utils-dom/query"
 ],function(skylark,langx,browser,eventer,noder,geom,$){
 	var ui = skylark.ui = skylark.ui || {};
 		sbswt = ui.sbswt = {};
@@ -9279,1081 +10941,54 @@ define('skylark-ui-swt/ui',[
 
 });
 
-define('skylark-utils/dnd',[
-    "./skylark",
-    "./langx",
-    "./noder",
-    "./datax",
-    "./finder",
-    "./geom",
-    "./eventer",
-    "./styler"
-], function(skylark, langx, noder, datax, finder, geom, eventer, styler) {
-    var on = eventer.on,
-        off = eventer.off,
-        attr = datax.attr,
-        removeAttr = datax.removeAttr,
-        offset = geom.pagePosition,
-        addClass = styler.addClass,
-        height = geom.height;
-
-
-    var DndManager = langx.Evented.inherit({
-        klassName: "DndManager",
-
-        init: function() {
-
-        },
-
-        prepare: function(draggable) {
-            var e = eventer.create("preparing", {
-                dragSource: draggable.dragSource,
-                dragHandle: draggable.dragHandle
-            });
-            draggable.trigger(e);
-            draggable.dragSource = e.dragSource;
-        },
-
-        start: function(draggable, event) {
-
-            var p = geom.pagePosition(draggable.dragSource);
-            this.draggingOffsetX = parseInt(event.pageX - p.left);
-            this.draggingOffsetY = parseInt(event.pageY - p.top)
-
-            var e = eventer.create("started", {
-                elm: draggable.elm,
-                dragSource: draggable.dragSource,
-                dragHandle: draggable.dragHandle,
-                ghost: null,
-
-                transfer: {}
-            });
-
-            draggable.trigger(e);
-
-
-            this.dragging = draggable;
-
-            if (draggable.draggingClass) {
-                styler.addClass(draggable.dragSource, draggable.draggingClass);
-            }
-
-            this.draggingGhost = e.ghost;
-            if (!this.draggingGhost) {
-                this.draggingGhost = draggable.elm;
-            }
-
-            this.draggingTransfer = e.transfer;
-            if (this.draggingTransfer) {
-
-                langx.each(this.draggingTransfer, function(key, value) {
-                    event.dataTransfer.setData(key, value);
-                });
-            }
-
-            event.dataTransfer.setDragImage(this.draggingGhost, this.draggingOffsetX, this.draggingOffsetY);
-
-            event.dataTransfer.effectAllowed = "copyMove";
-
-            var e1 = eventer.create("dndStarted", {
-                elm: e.elm,
-                dragSource: e.dragSource,
-                dragHandle: e.dragHandle,
-                ghost: e.ghost,
-                transfer: e.transfer
-            });
-
-            this.trigger(e1);
-        },
-
-        over: function() {
-
-        },
-
-        end: function(dropped) {
-            var dragging = this.dragging;
-            if (dragging) {
-                if (dragging.draggingClass) {
-                    styler.removeClass(dragging.dragSource, dragging.draggingClass);
-                }
-            }
-
-            var e = eventer.create("dndEnded", {});
-            this.trigger(e);
-
-
-            this.dragging = null;
-            this.draggingTransfer = null;
-            this.draggingGhost = null;
-            this.draggingOffsetX = null;
-            this.draggingOffsetY = null;
-        }
-    });
-
-    var manager = new DndManager(),
-        draggingHeight,
-        placeholders = [];
-
-
-
-    var Draggable = langx.Evented.inherit({
-        klassName: "Draggable",
-
-        init: function(elm, params) {
-            var self = this;
-
-            self.elm = elm;
-            self.draggingClass = params.draggingClass || "dragging",
-                self.params = langx.clone(params);
-
-            ["preparing", "started", "ended", "moving"].forEach(function(eventName) {
-                if (langx.isFunction(params[eventName])) {
-                    self.on(eventName, params[eventName]);
-                }
-            });
-
-
-            eventer.on(elm, {
-                "mousedown": function(e) {
-                    var params = self.params;
-                    if (params.handle) {
-                        self.dragHandle = finder.closest(e.target, params.handle);
-                        if (!self.dragHandle) {
-                            return;
-                        }
-                    }
-                    if (params.source) {
-                        self.dragSource = finder.closest(e.target, params.source);
-                    } else {
-                        self.dragSource = self.elm;
-                    }
-                    manager.prepare(self);
-                    if (self.dragSource) {
-                        datax.attr(self.dragSource, "draggable", 'true');
-                    }
-                },
-
-                "mouseup": function(e) {
-                    if (self.dragSource) {
-                        //datax.attr(self.dragSource, "draggable", 'false');
-                        self.dragSource = null;
-                        self.dragHandle = null;
-                    }
-                },
-
-                "dragstart": function(e) {
-                    datax.attr(self.dragSource, "draggable", 'false');
-                    manager.start(self, e);
-                },
-
-                "dragend": function(e) {
-                    eventer.stop(e);
-
-                    if (!manager.dragging) {
-                        return;
-                    }
-
-                    manager.end(false);
-                }
-            });
-
-        }
-
-    });
-
-
-    var Droppable = langx.Evented.inherit({
-        klassName: "Droppable",
-
-        init: function(elm, params) {
-            var self = this,
-                draggingClass = params.draggingClass || "dragging",
-                hoverClass,
-                activeClass,
-                acceptable = true;
-
-            self.elm = elm;
-            self._params = params;
-
-            ["started", "entered", "leaved", "dropped", "overing"].forEach(function(eventName) {
-                if (langx.isFunction(params[eventName])) {
-                    self.on(eventName, params[eventName]);
-                }
-            });
-
-            eventer.on(elm, {
-                "dragover": function(e) {
-                    e.stopPropagation()
-
-                    if (!acceptable) {
-                        return
-                    }
-
-                    var e2 = eventer.create("overing", {
-                        overElm: e.target,
-                        transfer: manager.draggingTransfer,
-                        acceptable: true
-                    });
-                    self.trigger(e2);
-
-                    if (e2.acceptable) {
-                        e.preventDefault() // allow drop
-
-                        e.dataTransfer.dropEffect = "copyMove";
-                    }
-
-                },
-
-                "dragenter": function(e) {
-                    var params = self._params,
-                        elm = self.elm;
-
-                    var e2 = eventer.create("entered", {
-                        transfer: manager.draggingTransfer
-                    });
-
-                    self.trigger(e2);
-
-                    e.stopPropagation()
-
-                    if (hoverClass && acceptable) {
-                        styler.addClass(elm, hoverClass)
-                    }
-                },
-
-                "dragleave": function(e) {
-                    var params = self._params,
-                        elm = self.elm;
-                    if (!acceptable) return false
-
-                    var e2 = eventer.create("leaved", {
-                        transfer: manager.draggingTransfer
-                    });
-
-                    self.trigger(e2);
-
-                    e.stopPropagation()
-
-                    if (hoverClass && acceptable) {
-                        styler.removeClass(elm, hoverClass);
-                    }
-                },
-
-                "drop": function(e) {
-                    var params = self._params,
-                        elm = self.elm;
-
-                    eventer.stop(e); // stops the browser from redirecting.
-
-                    if (!manager.dragging) return
-
-                    // manager.dragging.elm.removeClass('dragging');
-
-                    if (hoverClass && acceptable) {
-                        styler.addClass(elm, hoverClass)
-                    }
-
-                    var e2 = eventer.create("dropped", {
-                        transfer: manager.draggingTransfer
-                    });
-
-                    self.trigger(e2);
-
-                    manager.end(true)
-                }
-            });
-
-            manager.on("dndStarted", function(e) {
-                var e2 = eventer.create("started", {
-                    transfer: manager.draggingTransfer,
-                    acceptable: false
-                });
-
-                self.trigger(e2);
-
-                acceptable = e2.acceptable;
-                hoverClass = e2.hoverClass;
-                activeClass = e2.activeClass;
-
-                if (activeClass && acceptable) {
-                    styler.addClass(elm, activeClass);
-                }
-
-            }).on("dndEnded", function(e) {
-                var e2 = eventer.create("ended", {
-                    transfer: manager.draggingTransfer,
-                    acceptable: false
-                });
-
-                self.trigger(e2);
-
-                if (hoverClass && acceptable) {
-                    styler.removeClass(elm, hoverClass);
-                }
-                if (activeClass && acceptable) {
-                    styler.removeClass(elm, activeClass);
-                }
-
-                acceptable = false;
-                activeClass = null;
-                hoverClass = null;
-            });
-
-        }
-    });
-
-
-    /*   
-     * Make the specified element be in a moveable state.
-     * @param {HTMLElement} elm  
-     * @param { } params
-     */
-    function draggable(elm, params) {
-        return new Draggable(elm, params);
-    }
-
-    /*   
-     * Make the specified element be in a droppable state.
-     * @param {HTMLElement} elm  
-     * @param { } params
-     */
-    function droppable(elm, params) {
-        return new Droppable(elm, params);
-    }
-
-
-    function dnd() {
-        return dnd;
-    }
-
-    langx.mixin(dnd, {
-        //params ： {
-        //  target : Element or string or function
-        //  handle : Element
-        //  copy : boolean
-        //  placeHolder : "div"
-        //  hoverClass : "hover"
-        //  start : function
-        //  enter : function
-        //  over : function
-        //  leave : function
-        //  drop : function
-        //  end : function
-        //
-        //
-        //}
-        draggable: draggable,
-
-        //params ： {
-        //  accept : string or function
-        //  placeHolder
-        //
-        //
-        //
-        //}
-        droppable: droppable,
-
-        manager: manager
-
-
-    });
-
-    return skylark.dnd = dnd;
-});
-define('skylark-utils/filer',[
-    "./skylark",
+define('skylark-utils-dom/elmx',[
+    "./dom",
     "./langx",
     "./datax",
     "./eventer",
-    "./styler"
-], function(skylark, langx, datax, eventer, styler) {
-    var concat = Array.prototype.concat,
-        on = eventer.on,
-        attr = eventer.attr,
-        Deferred = langx.Deferred,
-
-        fileInput,
-        fileInputForm,
-        fileSelected,
-        maxFileSize = 1 / 0;
-
-
-    var webentry = (function() {
-        function one(entry, path) {
-            var d = new Deferred(),
-                onError = function(e) {
-                    d.reject(e);
-                };
-
-            path = path || '';
-            if (entry.isFile) {
-                entry.file(function(file) {
-                    file.relativePath = path;
-                    d.resolve(file);
-                }, onError);
-            } else if (entry.isDirectory) {
-                var dirReader = entry.createReader();
-                dirReader.readEntries(function(entries) {
-                    all(
-                        entries,
-                        path + entry.name + '/'
-                    ).then(function(files) {
-                        d.resolve(files);
-                    }).catch(onError);
-                }, onError);
-            } else {
-                // Return an empy list for file system items
-                // other than files or directories:
-                d.resolve([]);
-            }
-            return d.promise;
-        }
-
-        function all(entries, path) {
-            return Deferred.all(
-                langx.map(entries, function(entry) {
-                    return one(entry, path);
-                })
-            ).then(function() {
-                return concat.apply([], arguments);
-            });
-        }
-
-        return {
-            one: one,
-            all: all
-        };
-    })();
-
-    function dataURLtoBlob(dataurl) {
-        var arr = dataurl.split(','),
-            mime = arr[0].match(/:(.*?);/)[1],
-            bstr = atob(arr[1]),
-            n = bstr.length,
-            u8arr = new Uint8Array(n);
-        while (n--) {
-            u8arr[n] = bstr.charCodeAt(n);
-        }
-        return new Blob([u8arr], { type: mime });
-    }
-    /*
-     * Make the specified element to could accept HTML5 file drag and drop.
-     * @param {HTMLElement} elm
-     * @param {PlainObject} params
-     */
-    function dropzone(elm, params) {
-        params = params || {};
-        var hoverClass = params.hoverClass || "dropzone",
-            droppedCallback = params.dropped;
-
-        var enterdCount = 0;
-        on(elm, "dragenter", function(e) {
-            if (e.dataTransfer && e.dataTransfer.types.indexOf("Files") > -1) {
-                eventer.stop(e);
-                enterdCount++;
-                styler.addClass(elm, hoverClass)
-            }
-        });
-
-        on(elm, "dragover", function(e) {
-            if (e.dataTransfer && e.dataTransfer.types.indexOf("Files") > -1) {
-                eventer.stop(e);
-            }
-        });
-
-        on(elm, "dragleave", function(e) {
-            if (e.dataTransfer && e.dataTransfer.types.indexOf("Files") > -1) {
-                enterdCount--
-                if (enterdCount == 0) {
-                    styler.removeClass(elm, hoverClass);
-                }
-            }
-        });
-
-        on(elm, "drop", function(e) {
-            if (e.dataTransfer && e.dataTransfer.types.indexOf("Files") > -1) {
-                styler.removeClass(elm, hoverClass)
-                eventer.stop(e);
-                if (droppedCallback) {
-                    var items = e.dataTransfer.items;
-                    if (items && items.length && (items[0].webkitGetAsEntry ||
-                            items[0].getAsEntry)) {
-                        webentry.all(
-                            langx.map(items, function(item) {
-                                if (item.webkitGetAsEntry) {
-                                    return item.webkitGetAsEntry();
-                                }
-                                return item.getAsEntry();
-                            })
-                        ).then(droppedCallback);
-                    } else {
-                        droppedCallback(e.dataTransfer.files);
-                    }
-                }
-            }
-        });
-
-        return this;
-    }
-
-    function pastezone(elm, params) {
-        params = params || {};
-        var hoverClass = params.hoverClass || "pastezone",
-            pastedCallback = params.pasted;
-
-        on(elm, "paste", function(e) {
-            var items = e.originalEvent && e.originalEvent.clipboardData &&
-                e.originalEvent.clipboardData.items,
-                files = [];
-            if (items && items.length) {
-                langx.each(items, function(index, item) {
-                    var file = item.getAsFile && item.getAsFile();
-                    if (file) {
-                        files.push(file);
-                    }
-                });
-            }
-            if (pastedCallback && files.length) {
-                pastedCallback(files);
-            }
-        });
-
-        return this;
-    }
-    /*
-     * Make the specified element to pop-up the file selection dialog box when clicked , and read the contents the files selected from client file system by user.
-     * @param {HTMLElement} elm
-     * @param {PlainObject} params
-     */
-    function picker(elm, params) {
-        on(elm, "click", function(e) {
-            e.preventDefault();
-            select(params);
-        });
-        return this;
-    }
-
-    function select(params) {
-        params = params || {};
-        var directory = params.directory || false,
-            multiple = params.multiple || false,
-            fileSelected = params.picked;
-        if (!fileInput) {
-            var input = fileInput = document.createElement("input");
-
-            function selectFiles(pickedFiles) {
-                for (var i = pickedFiles.length; i--;) {
-                    if (pickedFiles[i].size > maxFileSize) {
-                        pickedFiles.splice(i, 1);
-                    }
-                }
-                fileSelected(pickedFiles);
-            }
-
-            input.type = "file";
-            input.style.position = "fixed",
-                input.style.left = 0,
-                input.style.top = 0,
-                input.style.opacity = .001,
-                document.body.appendChild(input);
-
-            input.onchange = function(e) {
-                var entries = e.target.webkitEntries || e.target.entries;
-
-                if (entries && entries.length) {
-                    webentry.all(entries).then(function(files) {
-                        selectFiles(files);
-                    });
-                } else {
-                    selectFiles(Array.prototype.slice.call(e.target.files));
-                }
-                // reset to "", so selecting the same file next time still trigger the change handler
-                input.value = "";
-            };
-        }
-        fileInput.multiple = multiple;
-        fileInput.webkitdirectory = directory;
-        fileInput.click();
-    }
-
-    function upload(params) {
-        var xoptions = langx.mixin({
-            contentRange: null, //
-
-            // The parameter name for the file form data (the request argument name).
-            // If undefined or empty, the name property of the file input field is
-            // used, or "files[]" if the file input name property is also empty,
-            // can be a string or an array of strings:
-            paramName: undefined,
-            // By default, each file of a selection is uploaded using an individual
-            // request for XHR type uploads. Set to false to upload file
-            // selections in one request each:
-            singleFileUploads: true,
-            // To limit the number of files uploaded with one XHR request,
-            // set the following option to an integer greater than 0:
-            limitMultiFileUploads: undefined,
-            // The following option limits the number of files uploaded with one
-            // XHR request to keep the request size under or equal to the defined
-            // limit in bytes:
-            limitMultiFileUploadSize: undefined,
-            // Multipart file uploads add a number of bytes to each uploaded file,
-            // therefore the following option adds an overhead for each file used
-            // in the limitMultiFileUploadSize configuration:
-            limitMultiFileUploadSizeOverhead: 512,
-            // Set the following option to true to issue all file upload requests
-            // in a sequential order:
-            sequentialUploads: false,
-            // To limit the number of concurrent uploads,
-            // set the following option to an integer greater than 0:
-            limitConcurrentUploads: undefined,
-            // By default, XHR file uploads are sent as multipart/form-data.
-            // The iframe transport is always using multipart/form-data.
-            // Set to false to enable non-multipart XHR uploads:
-            multipart: true,
-            // To upload large files in smaller chunks, set the following option
-            // to a preferred maximum chunk size. If set to 0, null or undefined,
-            // or the browser does not support the required Blob API, files will
-            // be uploaded as a whole.
-            maxChunkSize: undefined,
-            // When a non-multipart upload or a chunked multipart upload has been
-            // aborted, this option can be used to resume the upload by setting
-            // it to the size of the already uploaded bytes. This option is most
-            // useful when modifying the options object inside of the "add" or
-            // "send" callbacks, as the options are cloned for each file upload.
-            uploadedBytes: undefined,
-            // By default, failed (abort or error) file uploads are removed from the
-            // global progress calculation. Set the following option to false to
-            // prevent recalculating the global progress data:
-            recalculateProgress: true,
-            // Interval in milliseconds to calculate and trigger progress events:
-            progressInterval: 100,
-            // Interval in milliseconds to calculate progress bitrate:
-            bitrateInterval: 500,
-            // By default, uploads are started automatically when adding files:
-            autoUpload: true,
-
-            // Error and info messages:
-            messages: {
-                uploadedBytes: 'Uploaded bytes exceed file size'
-            },
-
-            // Translation function, gets the message key to be translated
-            // and an object with context specific data as arguments:
-            i18n: function(message, context) {
-                message = this.messages[message] || message.toString();
-                if (context) {
-                    langx.each(context, function(key, value) {
-                        message = message.replace('{' + key + '}', value);
-                    });
-                }
-                return message;
-            },
-
-            // Additional form data to be sent along with the file uploads can be set
-            // using this option, which accepts an array of objects with name and
-            // value properties, a function returning such an array, a FormData
-            // object (for XHR file uploads), or a simple object.
-            // The form of the first fileInput is given as parameter to the function:
-            formData: function(form) {
-                return form.serializeArray();
-            },
-
-            // The add callback is invoked as soon as files are added to the fileupload
-            // widget (via file input selection, drag & drop, paste or add API call).
-            // If the singleFileUploads option is enabled, this callback will be
-            // called once for each file in the selection for XHR file uploads, else
-            // once for each file selection.
-            //
-            // The upload starts when the submit method is invoked on the data parameter.
-            // The data object contains a files property holding the added files
-            // and allows you to override plugin options as well as define ajax settings.
-            //
-            // Listeners for this callback can also be bound the following way:
-            // .bind('fileuploadadd', func);
-            //
-            // data.submit() returns a Promise object and allows to attach additional
-            // handlers using jQuery's Deferred callbacks:
-            // data.submit().done(func).fail(func).always(func);
-            add: function(e, data) {
-                if (e.isDefaultPrevented()) {
-                    return false;
-                }
-                if (data.autoUpload || (data.autoUpload !== false &&
-                        $(this).fileupload('option', 'autoUpload'))) {
-                    data.process().done(function() {
-                        data.submit();
-                    });
-                }
-            },
-
-            // Other callbacks:
-
-            // Callback for the submit event of each file upload:
-            // submit: function (e, data) {}, // .bind('fileuploadsubmit', func);
-
-            // Callback for the start of each file upload request:
-            // send: function (e, data) {}, // .bind('fileuploadsend', func);
-
-            // Callback for successful uploads:
-            // done: function (e, data) {}, // .bind('fileuploaddone', func);
-
-            // Callback for failed (abort or error) uploads:
-            // fail: function (e, data) {}, // .bind('fileuploadfail', func);
-
-            // Callback for completed (success, abort or error) requests:
-            // always: function (e, data) {}, // .bind('fileuploadalways', func);
-
-            // Callback for upload progress events:
-            // progress: function (e, data) {}, // .bind('fileuploadprogress', func);
-
-            // Callback for global upload progress events:
-            // progressall: function (e, data) {}, // .bind('fileuploadprogressall', func);
-
-            // Callback for uploads start, equivalent to the global ajaxStart event:
-            // start: function (e) {}, // .bind('fileuploadstart', func);
-
-            // Callback for uploads stop, equivalent to the global ajaxStop event:
-            // stop: function (e) {}, // .bind('fileuploadstop', func);
-
-            // Callback for change events of the fileInput(s):
-            // change: function (e, data) {}, // .bind('fileuploadchange', func);
-
-            // Callback for paste events to the pasteZone(s):
-            // paste: function (e, data) {}, // .bind('fileuploadpaste', func);
-
-            // Callback for drop events of the dropZone(s):
-            // drop: function (e, data) {}, // .bind('fileuploaddrop', func);
-
-            // Callback for dragover events of the dropZone(s):
-            // dragover: function (e) {}, // .bind('fileuploaddragover', func);
-
-            // Callback for the start of each chunk upload request:
-            // chunksend: function (e, data) {}, // .bind('fileuploadchunksend', func);
-
-            // Callback for successful chunk uploads:
-            // chunkdone: function (e, data) {}, // .bind('fileuploadchunkdone', func);
-
-            // Callback for failed (abort or error) chunk uploads:
-            // chunkfail: function (e, data) {}, // .bind('fileuploadchunkfail', func);
-
-            // Callback for completed (success, abort or error) chunk upload requests:
-            // chunkalways: function (e, data) {}, // .bind('fileuploadchunkalways', func);
-
-            // The plugin options are used as settings object for the ajax calls.
-            // The following are jQuery ajax settings required for the file uploads:
-            processData: false,
-            contentType: false,
-            cache: false
-        }, params);
-
-        var blobSlice = function() {
-                var slice = Blob.prototype.slice || Blob.prototype.webkitSlice || Blob.prototype.mozSlice;
-                return slice.apply(this, arguments);
-            },
-            ajax = function(data) {
-                return langx.Xhr.request(data.url, data);
-            };
-
-        function initDataSettings(o) {
-            o.type = o.type || "POST";
-
-            if (!chunkedUpload(o, true)) {
-                if (!o.data) {
-                    initXHRData(o);
-                }
-                //initProgressListener(o);
-            }
-        }
-
-        function initXHRData(o) {
-            var that = this,
-                formData,
-                file = o.files[0],
-                // Ignore non-multipart setting if not supported:
-                multipart = o.multipart,
-                paramName = langx.type(o.paramName) === 'array' ?
-                o.paramName[0] : o.paramName;
-
-            o.headers = langx.mixin({}, o.headers);
-            if (o.contentRange) {
-                o.headers['Content-Range'] = o.contentRange;
-            }
-            if (!multipart) {
-                o.headers['Content-Disposition'] = 'attachment; filename="' +
-                    encodeURI(file.name) + '"';
-                o.contentType = file.type || 'application/octet-stream';
-                o.data = o.blob || file;
-            } else {
-                formData = new FormData();
-                if (o.blob) {
-                    formData.append(paramName, o.blob, file.name);
-                } else {
-                    langx.each(o.files, function(index, file) {
-                        // This check allows the tests to run with
-                        // dummy objects:
-                        formData.append(
-                            (langx.type(o.paramName) === 'array' &&
-                                o.paramName[index]) || paramName,
-                            file,
-                            file.uploadName || file.name
-                        );
-                    });
-                }
-                o.data = formData;
-            }
-            // Blob reference is not needed anymore, free memory:
-            o.blob = null;
-        }
-
-        function getTotal(files) {
-            var total = 0;
-            langx.each(files, function(index, file) {
-                total += file.size || 1;
-            });
-            return total;
-        }
-
-        function getUploadedBytes(jqXHR) {
-            var range = jqXHR.getResponseHeader('Range'),
-                parts = range && range.split('-'),
-                upperBytesPos = parts && parts.length > 1 &&
-                parseInt(parts[1], 10);
-            return upperBytesPos && upperBytesPos + 1;
-        }
-
-        function initProgressObject(obj) {
-            var progress = {
-                loaded: 0,
-                total: 0,
-                bitrate: 0
-            };
-            if (obj._progress) {
-                langx.mixin(obj._progress, progress);
-            } else {
-                obj._progress = progress;
-            }
-        }
-
-        function BitrateTimer() {
-            this.timestamp = ((Date.now) ? Date.now() : (new Date()).getTime());
-            this.loaded = 0;
-            this.bitrate = 0;
-            this.getBitrate = function(now, loaded, interval) {
-                var timeDiff = now - this.timestamp;
-                if (!this.bitrate || !interval || timeDiff > interval) {
-                    this.bitrate = (loaded - this.loaded) * (1000 / timeDiff) * 8;
-                    this.loaded = loaded;
-                    this.timestamp = now;
-                }
-                return this.bitrate;
-            };
-        }
-
-        function chunkedUpload(options, testOnly) {
-            options.uploadedBytes = options.uploadedBytes || 0;
-            var that = this,
-                file = options.files[0],
-                fs = file.size,
-                ub = options.uploadedBytes,
-                mcs = options.maxChunkSize || fs,
-                slice = blobSlice,
-                dfd = new Deferred(),
-                promise = dfd.promise,
-                jqXHR,
-                upload;
-            if (!(slice && (ub || mcs < fs)) ||
-                options.data) {
-                return false;
-            }
-            if (testOnly) {
-                return true;
-            }
-            if (ub >= fs) {
-                file.error = options.i18n('uploadedBytes');
-                return this._getXHRPromise(
-                    false,
-                    options.context, [null, 'error', file.error]
-                );
-            }
-            // The chunk upload method:
-            upload = function() {
-                // Clone the options object for each chunk upload:
-                var o = langx.mixin({}, options),
-                    currentLoaded = o._progress.loaded;
-                o.blob = slice.call(
-                    file,
-                    ub,
-                    ub + mcs,
-                    file.type
-                );
-                // Store the current chunk size, as the blob itself
-                // will be dereferenced after data processing:
-                o.chunkSize = o.blob.size;
-                // Expose the chunk bytes position range:
-                o.contentRange = 'bytes ' + ub + '-' +
-                    (ub + o.chunkSize - 1) + '/' + fs;
-                // Process the upload data (the blob and potential form data):
-                initXHRData(o);
-                // Add progress listeners for this chunk upload:
-                //initProgressListener(o);
-                jqXHR = $.ajax(o).done(function(result, textStatus, jqXHR) {
-                        ub = getUploadedBytes(jqXHR) ||
-                            (ub + o.chunkSize);
-                        // Create a progress event if no final progress event
-                        // with loaded equaling total has been triggered
-                        // for this chunk:
-                        if (currentLoaded + o.chunkSize - o._progress.loaded) {
-                            dfd.progress({
-                                lengthComputable: true,
-                                loaded: ub - o.uploadedBytes,
-                                total: ub - o.uploadedBytes
-                            });
-                        }
-                        options.uploadedBytes = o.uploadedBytes = ub;
-                        o.result = result;
-                        o.textStatus = textStatus;
-                        o.jqXHR = jqXHR;
-                        //that._trigger('chunkdone', null, o);
-                        //that._trigger('chunkalways', null, o);
-                        if (ub < fs) {
-                            // File upload not yet complete,
-                            // continue with the next chunk:
-                            upload();
-                        } else {
-                            dfd.resolveWith(
-                                o.context, [result, textStatus, jqXHR]
-                            );
-                        }
-                    })
-                    .fail(function(jqXHR, textStatus, errorThrown) {
-                        o.jqXHR = jqXHR;
-                        o.textStatus = textStatus;
-                        o.errorThrown = errorThrown;
-                        //that._trigger('chunkfail', null, o);
-                        //that._trigger('chunkalways', null, o);
-                        dfd.rejectWith(
-                            o.context, [jqXHR, textStatus, errorThrown]
-                        );
-                    });
-            };
-            //this._enhancePromise(promise);
-            promise.abort = function() {
-                return jqXHR.abort();
-            };
-            upload();
-            return promise;
-        }
-
-        initDataSettings(xoptions);
-
-        xoptions._bitrateTimer = new BitrateTimer();
-
-        var jqXhr = chunkedUpload(xoptions) || ajax(xoptions);
-
-        jqXhr.options = xoptions;
-
-        return jqXhr;
-    }
-
-    var filer = function() {
-        return filer;
-    };
-
-    langx.mixin(filer, {
-        dropzone: dropzone,
-
-        pastezone: pastezone,
-
-        picker: picker,
-
-        select: select,
-
-        upload: upload,
-
-        readFile: function(file, params) {
-            params = params || {};
-            var d = new Deferred,
-                reader = new FileReader();
-
-            reader.onload = function(evt) {
-                d.resolve(evt.target.result);
-            };
-            reader.onerror = function(e) {
-                var code = e.target.error.code;
-                if (code === 2) {
-                    alert('please don\'t open this page using protocol fill:///');
-                } else {
-                    alert('error code: ' + code);
-                }
-            };
-
-            if (params.asArrayBuffer) {
-                reader.readAsArrayBuffer(file);
-            } else if (params.asDataUrl) {
-                reader.readAsDataURL(file);
-            } else if (params.asText) {
-                reader.readAsText(file);
-            } else {
-                reader.readAsArrayBuffer(file);
-            }
-
-            return d.promise;
-        },
-
-        writeFile: function(data, name) {
-            if (window.navigator.msSaveBlob) {
-                if (langx.isString(data)) {
-                    data = dataURItoBlob(data);
-                }
-                window.navigator.msSaveBlob(data, name);
-            } else {
-                var a = document.createElement('a');
-                if (data instanceof Blob) {
-                    data = langx.URL.createObjectURL(data);
-                }
-                a.href = data;
-                a.setAttribute('download', name || 'noname');
-                a.dispatchEvent(new CustomEvent('click'));
-            }
-        }
-
-    });
-
-    return skylark.filer = filer;
-});
-define('skylark-utils/velm',[
-    "./skylark",
-    "./langx",
-    "./datax",
-    "./dnd",
-    "./eventer",
-    "./filer",
     "./finder",
     "./fx",
     "./geom",
     "./noder",
-    "./styler"
-], function(skylark, langx, datax, dnd, eventer, filer, finder, fx, geom, noder, styler) {
+    "./styler",
+    "./query"
+], function(dom, langx, datax, eventer, finder, fx, geom, noder, styler,$) {
     var map = Array.prototype.map,
         slice = Array.prototype.slice;
     /*
-     * VisualElement is a skylark class type wrapping a visule dom node,provides a number of prototype methods and supports chain calls.
+     * VisualElement is a skylark class type wrapping a visule dom node,
+     * provides a number of prototype methods and supports chain calls.
      */
     var VisualElement = langx.klass({
         klassName: "VisualElement",
 
-        "init": function(node) {
+        "_construct": function(node) {
             if (langx.isString(node)) {
-                node = document.getElementById(node);
+                if (node.charAt(0) === "<") {
+                    //html
+                    node = noder.createFragment(node)[0];
+                } else {
+                    // id
+                    node = document.getElementById(node);
+                }
             }
-            this.domNode = node;
+            this._elm = node;
         }
     });
+
+    VisualElement.prototype.$ = VisualElement.prototype.query = function(selector) {
+        return $(selector,this._elm);
+    };
+
+    VisualElement.prototype.elm = function() {
+        return this._elm;
+    };
+
     /*
      * the VisualElement object wrapping document.body
      */
     var root = new VisualElement(document.body),
-        velm = function(node) {
+        elmx = function(node) {
             if (node) {
                 return new VisualElement(node);
             } else {
@@ -10368,7 +11003,7 @@ define('skylark-utils/velm',[
     function _delegator(fn, context) {
         return function() {
             var self = this,
-                elem = self.domNode,
+                elem = self._elm,
                 ret = fn.apply(context, [elem].concat(slice.call(arguments)));
 
             if (ret) {
@@ -10380,7 +11015,7 @@ define('skylark-utils/velm',[
                     } else if (langx.isArrayLike(ret)) {
                         ret = map.call(ret, function(el) {
                             if (el instanceof HTMLElement) {
-                                return new VisualElement(ret);
+                                return new VisualElement(el);
                             } else {
                                 return el;
                             }
@@ -10392,10 +11027,10 @@ define('skylark-utils/velm',[
         };
     }
 
-    langx.mixin(velm, {
+    langx.mixin(elmx, {
         batch: function(nodes, action, args) {
             nodes.forEach(function(node) {
-                var elm = (node instanceof VisualElement) ? node : velm(node);
+                var elm = (node instanceof VisualElement) ? node : elmx(node);
                 elm[action].apply(elm, args);
             });
 
@@ -10426,7 +11061,7 @@ define('skylark-utils/velm',[
     });
 
     // from ./datax
-    velm.delegate([
+    elmx.delegate([
         "attr",
         "data",
         "prop",
@@ -10436,15 +11071,8 @@ define('skylark-utils/velm',[
         "val"
     ], datax);
 
-    // from ./dnd
-    velm.delegate([
-        "draggable",
-        "droppable"
-    ], dnd);
-
-
     // from ./eventer
-    velm.delegate([
+    elmx.delegate([
         "off",
         "on",
         "one",
@@ -10452,14 +11080,8 @@ define('skylark-utils/velm',[
         "trigger"
     ], eventer);
 
-    // from ./filer
-    velm.delegate([
-        "picker",
-        "dropzone"
-    ], filer);
-
     // from ./finder
-    velm.delegate([
+    elmx.delegate([
         "ancestor",
         "ancestors",
         "children",
@@ -10481,7 +11103,7 @@ define('skylark-utils/velm',[
      * find a dom element matched by the specified selector.
      * @param {String} selector
      */
-    velm.find = function(selector) {
+    elmx.find = function(selector) {
         if (selector === "body") {
             return this.root;
         } else {
@@ -10490,7 +11112,7 @@ define('skylark-utils/velm',[
     };
 
     // from ./fx
-    velm.delegate([
+    elmx.delegate([
         "animate",
         "fadeIn",
         "fadeOut",
@@ -10504,7 +11126,7 @@ define('skylark-utils/velm',[
 
 
     // from ./geom
-    velm.delegate([
+    elmx.delegate([
         "borderExtents",
         "boundingPosition",
         "boundingRect",
@@ -10527,15 +11149,8 @@ define('skylark-utils/velm',[
         "width"
     ], geom);
 
-    // from ./mover
-    velm.delegate([
-        "draggable",
-        "droppable"
-    ], dnd);
-
-
     // from ./noder
-    velm.delegate([
+    elmx.delegate([
         "after",
         "append",
         "before",
@@ -10545,6 +11160,9 @@ define('skylark-utils/velm',[
         "empty",
         "html",
         "isChildOf",
+        "isDocument",
+        "isInDocument",
+        "isWindow",
         "ownerDoc",
         "prepend",
         "remove",
@@ -10559,7 +11177,7 @@ define('skylark-utils/velm',[
     ], noder);
 
     // from ./styler
-    velm.delegate([
+    elmx.delegate([
         "addClass",
         "className",
         "css",
@@ -10607,322 +11225,1055 @@ define('skylark-utils/velm',[
 
     });
 
-    return skylark.velm = velm;
+
+    return dom.elmx = elmx;
 });
-define('skylark-utils/widgets',[
-    "./skylark",
+define('skylark-utils-dom/plugins',[
+    "./dom",
     "./langx",
     "./noder",
     "./datax",
-    "./styler",
-    "./geom",
     "./eventer",
+    "./finder",
+    "./geom",
+    "./styler",
+    "./fx",
     "./query",
-    "./velm"
-], function(skylark,langx,noder, datax, styler, geom, eventer,query,velm) {
-	// Cached regex to split keys for `delegate`.
-	var delegateEventSplitter = /^(\S+)\s*(.*)$/,
-		slice = Array.prototype.slice;
+    "./elmx"
+], function(dom, langx, noder, datax, eventer, finder, geom, styler, fx, $, elmx) {
+    "use strict";
+
+    var slice = Array.prototype.slice,
+        concat = Array.prototype.concat,
+        pluginKlasses = {},
+        shortcuts = {};
+
+    /*
+     * Create or get or destory a plugin instance assocated with the element.
+     */
+    function instantiate(elm,pluginName,options) {
+        var pair = pluginName.split(":"),
+            instanceDataName = pair[1];
+        pluginName = pair[0];
+
+        if (!instanceDataName) {
+            instanceDataName = pluginName;
+        }
+
+        var pluginInstance = datax.data( elm, instanceDataName );
+
+        if (options === "instance") {
+            return pluginInstance;
+        } else if (options === "destroy") {
+            if (!pluginInstance) {
+                throw new Error ("The plugin instance is not existed");
+            }
+            pluginInstance.destroy();
+            datax.removeData( elm, pluginName);
+            pluginInstance = undefined;
+        } else {
+            if (!pluginInstance) {
+                if (options !== undefined && typeof options !== "object") {
+                    throw new Error ("The options must be a plain object");
+                }
+                var pluginKlass = pluginKlasses[pluginName]; 
+                pluginInstance = new pluginKlass(elm,options);
+                datax.data( elm, instanceDataName,pluginInstance );
+            } else if (options) {
+                pluginInstance.reset(options);
+            }
+        }
+
+        return pluginInstance;
+    }
+
+    function shortcutter(pluginName,extfn) {
+       /*
+        * Create or get or destory a plugin instance assocated with the element,
+        * and also you can execute the plugin method directory;
+        */
+        return function (elm,options) {
+            var  plugin = instantiate(elm, pluginName,"instance");
+            if ( options === "instance" ) {
+              return plugin || null;
+            }
+            if (!plugin) {
+                plugin = instantiate(elm, pluginName,typeof options == 'object' && options || {});
+            }
+
+            if (options) {
+                var args = slice.call(arguments,1); //2
+                if (extfn) {
+                    return extfn.apply(plugin,args);
+                } else {
+                    if (typeof options == 'string') {
+                        var methodName = options;
+
+                        if ( !plugin ) {
+                            throw new Error( "cannot call methods on " + pluginName +
+                                " prior to initialization; " +
+                                "attempted to call method '" + methodName + "'" );
+                        }
+
+                        if ( !langx.isFunction( plugin[ methodName ] ) || methodName.charAt( 0 ) === "_" ) {
+                            throw new Error( "no such method '" + methodName + "' for " + pluginName +
+                                " plugin instance" );
+                        }
+
+                        return plugin[methodName].apply(plugin,args);
+                    }                
+                }                
+            }
+
+        }
+
+    }
+
+    /*
+     * Register a plugin type
+     */
+    function register( pluginKlass,shortcutName,instanceDataName,extfn) {
+        var pluginName = pluginKlass.prototype.pluginName;
+        
+        pluginKlasses[pluginName] = pluginKlass;
+
+        if (shortcutName) {
+            if (instanceDataName && langx.isFunction(instanceDataName)) {
+                extfn = instanceDataName;
+                instanceDataName = null;
+            } 
+            if (instanceDataName) {
+                pluginName = pluginName + ":" + instanceDataName;
+            }
+
+            var shortcut = shortcuts[shortcutName] = shortcutter(pluginName,extfn);
+                
+            $.fn[shortcutName] = function(options) {
+                var returnValue = this;
+
+                if ( !this.length && options === "instance" ) {
+                  returnValue = undefined;
+                } else {
+                  var args = slice.call(arguments);
+                  this.each(function () {
+                    var args2 = slice.call(args);
+                    args2.unshift(this);
+                    var  ret  = shortcut.apply(null,args2);
+                    if (ret !== undefined) {
+                        returnValue = ret;
+                        return false;
+                    }
+                  });
+                }
+
+                return returnValue;
+            };
+
+            elmx.partial(shortcutName,function(options) {
+                var  ret  = shortcut(this._elm,options);
+                if (ret === undefined) {
+                    ret = this;
+                }
+                return ret;
+            });
+
+        }
+    }
+
+ 
+    var Plugin =   langx.Evented.inherit({
+        klassName: "Plugin",
+
+        _construct : function(elm,options) {
+           this._elm = elm;
+           this._initOptions(options);
+        },
+
+        _initOptions : function(options) {
+          var ctor = this.constructor,
+              cache = ctor.cache = ctor.cache || {},
+              defaults = cache.defaults;
+          if (!defaults) {
+            var  ctors = [];
+            do {
+              ctors.unshift(ctor);
+              if (ctor === Plugin) {
+                break;
+              }
+              ctor = ctor.superclass;
+            } while (ctor);
+
+            defaults = cache.defaults = {};
+            for (var i=0;i<ctors.length;i++) {
+              ctor = ctors[i];
+              if (ctor.prototype.hasOwnProperty("options")) {
+                langx.mixin(defaults,ctor.prototype.options);
+              }
+              if (ctor.hasOwnProperty("options")) {
+                langx.mixin(defaults,ctor.options);
+              }
+            }
+          }
+          Object.defineProperty(this,"options",{
+            value :langx.mixin({},defaults,options)
+          });
+
+          //return this.options = langx.mixin({},defaults,options);
+          return this.options;
+        },
 
 
-	function bridge( name, object ) {
-		var fullName = object.prototype.widgetFullName || name,
-			fn = {};
+        destroy: function() {
+            var that = this;
 
-		function _delegate (isQuery) {
+            this._destroy();
+            // We can probably remove the unbind calls in 2.0
+            // all event bindings should go through this._on()
+            datax.removeData(this._elm,this.pluginName );
+        },
 
-		}
+        _destroy: langx.noop,
 
-		fn[name] = function( options ) {
-			var isMethodCall = typeof options === "string";
-			var args = slice.call( arguments, 1 );
-			var returnValue = this;
+        _delay: function( handler, delay ) {
+            function handlerProxy() {
+                return ( typeof handler === "string" ? instance[ handler ] : handler )
+                    .apply( instance, arguments );
+            }
+            var instance = this;
+            return setTimeout( handlerProxy, delay || 0 );
+        },
 
-			if ( isMethodCall ) {
+        option: function( key, value ) {
+            var options = key;
+            var parts;
+            var curOption;
+            var i;
 
-				// If this is an empty collection, we need to have the instance method
-				// return undefined instead of the jQuery instance
-				if ( !this.length && options === "instance" ) {
-					returnValue = undefined;
-				} else {
-					this.each( function() {
-						var methodValue;
-						var instance = datax.data( this, fullName );
+            if ( arguments.length === 0 ) {
 
-						if ( options === "instance" ) {
-							returnValue = instance;
-							return false;
-						}
+                // Don't return a reference to the internal hash
+                return langx.mixin( {}, this.options );
+            }
 
-						if ( !instance ) {
-							return $.error( "cannot call methods on " + name +
-								" prior to initialization; " +
-								"attempted to call method '" + options + "'" );
-						}
+            if ( typeof key === "string" ) {
 
-						if ( !langx.isFunction( instance[ options ] ) || options.charAt( 0 ) === "_" ) {
-							return $.error( "no such method '" + options + "' for " + name +
-								" widget instance" );
-						}
+                // Handle nested keys, e.g., "foo.bar" => { foo: { bar: ___ } }
+                options = {};
+                parts = key.split( "." );
+                key = parts.shift();
+                if ( parts.length ) {
+                    curOption = options[ key ] = langx.mixin( {}, this.options[ key ] );
+                    for ( i = 0; i < parts.length - 1; i++ ) {
+                        curOption[ parts[ i ] ] = curOption[ parts[ i ] ] || {};
+                        curOption = curOption[ parts[ i ] ];
+                    }
+                    key = parts.pop();
+                    if ( arguments.length === 1 ) {
+                        return curOption[ key ] === undefined ? null : curOption[ key ];
+                    }
+                    curOption[ key ] = value;
+                } else {
+                    if ( arguments.length === 1 ) {
+                        return this.options[ key ] === undefined ? null : this.options[ key ];
+                    }
+                    options[ key ] = value;
+                }
+            }
 
-						methodValue = instance[ options ].apply( instance, args );
+            this._setOptions( options );
 
-						if ( methodValue !== instance && methodValue !== undefined ) {
-							returnValue = methodValue && methodValue.jquery ?
-								returnValue.pushStack( methodValue.get() ) :
-								methodValue;
-							return false;
-						}
-					} );
-				}
-			} else {
+            return this;
+        },
 
-				// Allow multiple hashes to be passed on init
-				if ( args.length ) {
-					options = $.widget.extend.apply( null, [ options ].concat( args ) );
-				}
+        _setOptions: function( options ) {
+            var key;
 
-				this.each( function() {
-					var instance = datax.data( this, fullName );
-					if ( instance ) {
-						instance.option( options || {} );
-						if ( instance._init ) {
-							instance._init();
-						}
-					} else {
-						datax.data( this, fullName, new object( options, this ) );
-					}
-				} );
-			}
+            for ( key in options ) {
+                this._setOption( key, options[ key ] );
+            }
 
-			return returnValue;
-		};
-	};
+            return this;
+        },
 
-	function widgets() {
-	    return widgets;
-	}
+        _setOption: function( key, value ) {
 
-	var Widget = langx.Evented.inherit({
-	    init :function(el,options) {
-	    	//for supporting init(options,el)
-	        if (langx.isHtmlNode(options)) {
-	        	var _t = el,
-	        		options = el;
-	            el = options;
-	        }
-	        if (langx.isHtmlNode(el)) { 
-	        	this.el = el;
-	    	} else {
-	    		this.el = null;
-	    	}
-	        if (options) {
-	            langx.mixin(this,options);
-	        }
-	        if (!this.cid) {
-	            this.cid = langx.uniqueId('w');
-	        }
-	        this._ensureElement();
-	    },
+            this.options[ key ] = value;
 
-	    // The default `tagName` of a View's element is `"div"`.
-	    tagName: 'div',
+            return this;
+        },
 
-	    // query delegate for element lookup, scoped to DOM elements within the
-	    // current view. This should be preferred to global lookups where possible.
-	    $: function(selector) {
-	      return this.$el.find(selector);
-	    },
+        elm : function() {
+            return this._elm;
+        }
 
-	    // **render** is the core function that your view should override, in order
-	    // to populate its element (`this.el`), with the appropriate HTML. The
-	    // convention is for **render** to always return `this`.
-	    render: function() {
-	      return this;
-	    },
+    });
 
-	    // Remove this view by taking the element out of the DOM, and removing any
-	    // applicable Backbone.Events listeners.
-	    remove: function() {
-	      this._removeElement();
-	      this.unlistenTo();
-	      return this;
-	    },
+    $.fn.plugin = function(name,options) {
+        var args = slice.call( arguments, 1 ),
+            self = this,
+            returnValue = this;
 
-	    // Remove this view's element from the document and all event listeners
-	    // attached to it. Exposed for subclasses using an alternative DOM
-	    // manipulation API.
-	    _removeElement: function() {
-	      this.$el.remove();
-	    },
+        this.each(function(){
+            returnValue = instantiate.apply(self,[this,name].concat(args));
+        });
+        return returnValue;
+    };
 
-	    // Change the view's element (`this.el` property) and re-delegate the
-	    // view's events on the new element.
-	    setElement: function(element) {
-	      this.undelegateEvents();
-	      this._setElement(element);
-	      this.delegateEvents();
-	      return this;
-	    },
-
-	    // Creates the `this.el` and `this.$el` references for this view using the
-	    // given `el`. `el` can be a CSS selector or an HTML string, a jQuery
-	    // context or an element. Subclasses can override this to utilize an
-	    // alternative DOM manipulation API and are only required to set the
-	    // `this.el` property.
-	    _setElement: function(el) {
-	      this.$el = widgets.$(el);
-	      this.el = this.$el[0];
-	    },
-
-	    // Set callbacks, where `this.events` is a hash of
-	    //
-	    // *{"event selector": "callback"}*
-	    //
-	    //     {
-	    //       'mousedown .title':  'edit',
-	    //       'click .button':     'save',
-	    //       'click .open':       function(e) { ... }
-	    //     }
-	    //
-	    // pairs. Callbacks will be bound to the view, with `this` set properly.
-	    // Uses event delegation for efficiency.
-	    // Omitting the selector binds the event to `this.el`.
-	    delegateEvents: function(events) {
-	      events || (events = langx.result(this, 'events'));
-	      if (!events) return this;
-	      this.undelegateEvents();
-	      for (var key in events) {
-	        var method = events[key];
-	        if (!langx.isFunction(method)) method = this[method];
-	        if (!method) continue;
-	        var match = key.match(delegateEventSplitter);
-	        this.delegate(match[1], match[2], langx.proxy(method, this));
-	      }
-	      return this;
-	    },
-
-	    // Add a single event listener to the view's element (or a child element
-	    // using `selector`). This only works for delegate-able events: not `focus`,
-	    // `blur`, and not `change`, `submit`, and `reset` in Internet Explorer.
-	    delegate: function(eventName, selector, listener) {
-	      this.$el.on(eventName + '.delegateEvents' + this.uid, selector, listener);
-	      return this;
-	    },
-
-	    // Clears all callbacks previously bound to the view by `delegateEvents`.
-	    // You usually don't need to use this, but may wish to if you have multiple
-	    // Backbone views attached to the same DOM element.
-	    undelegateEvents: function() {
-	      if (this.$el) this.$el.off('.delegateEvents' + this.uid);
-	      return this;
-	    },
-
-	    // A finer-grained `undelegateEvents` for removing a single delegated event.
-	    // `selector` and `listener` are both optional.
-	    undelegate: function(eventName, selector, listener) {
-	      this.$el.off(eventName + '.delegateEvents' + this.uid, selector, listener);
-	      return this;
-	    },
-
-	    // Produces a DOM element to be assigned to your view. Exposed for
-	    // subclasses using an alternative DOM manipulation API.
-	    _createElement: function(tagName,attrs) {
-	      return noder.createElement(tagName,attrs);
-	    },
-
-	    // Ensure that the View has a DOM element to render into.
-	    // If `this.el` is a string, pass it through `$()`, take the first
-	    // matching element, and re-assign it to `el`. Otherwise, create
-	    // an element from the `id`, `className` and `tagName` properties.
-	    _ensureElement: function() {
-	      if (!this.el) {
-	        var attrs = langx.mixin({}, langx.result(this, 'attributes'));
-	        if (this.id) attrs.id = langx.result(this, 'id');
-	        if (this.className) attrs['class'] = langx.result(this, 'className');
-	        this.setElement(this._createElement(langx.result(this, 'tagName'),attrs));
-	        this._setAttributes(attrs);
-	      } else {
-	        this.setElement(langx.result(this, 'el'));
-	      }
-	    },
-
-	    // Set attributes from a hash on this view's element.  Exposed for
-	    // subclasses using an alternative DOM manipulation API.
-	    _setAttributes: function(attributes) {
-	      this.$el.attr(attributes);
-	    },
-
-	    // Translation function, gets the message key to be translated
-	    // and an object with context specific data as arguments:
-	    i18n: function (message, context) {
-	        message = (this.messages && this.messages[message]) || message.toString();
-	        if (context) {
-	            langx.each(context, function (key, value) {
-	                message = message.replace('{' + key + '}', value);
-	            });
-	        }
-	        return message;
-	    },
-
-		});
-
-	function defineWidgetClass(name,base,prototype) {
-
-	};
-
-	langx.mixin(widgets, {
-		$ : query,
-
-		define : defineWidgetClass,
-		Widget : Widget
-	});
+    elmx.partial("plugin",function(name,options) {
+        var args = slice.call( arguments, 1 );
+        return instantiate.apply(this,[this.domNode,name].concat(args));
+    }); 
 
 
-	return skylark.widgets = widgets;
+    function plugins() {
+        return plugins;
+    }
+     
+    langx.mixin(plugins, {
+        instantiate,
+        Plugin,
+        register,
+        shortcuts
+    });
+
+    return plugins;
+});
+define('skylark-data-collection/collections',[
+	"skylark-langx/skylark"
+],function(skylark){
+	return skylark.attach("data.collections",{});
+});
+define('skylark-data-collection/Collection',[
+    "skylark-langx/Evented",
+    "./collections"
+], function(Evented, collections) {
+
+    var Collection = collections.Collection = Evented.inherit({
+
+        "klassName": "Collection",
+
+        _clear: function() {
+            throw new Error('Unimplemented API');
+        },
+
+        "clear": function() {
+            //desc: "Removes all items from the Collection",
+            //result: {
+            //    type: Collection,
+            //    desc: "this instance for chain call"
+            //},
+            //params: [],
+            this._clear();
+            this.trigger("changed:clear");
+            return this;
+        },
+
+        /*
+         *@method count
+         *@return {Number}
+         */
+        count : /*Number*/function () {
+            var c = 0,
+                it = this.iterator();
+            while(!it.hasNext()){
+                c++;
+            }
+            return c;
+        },
+
+        "forEach": function( /*Function*/ func, /*Object?*/ thisArg) {
+            //desc: "Executes a provided callback function once per collection item.",
+            //result: {
+            //    type: Number,
+            //    desc: "the number of items"
+            //},
+            //params: [{
+            //    name: "func",
+            //    type: Function,
+            //    desc: "Function to execute for each element."
+            //}, {
+            //    name: "thisArg",
+            //    type: Object,
+            //    desc: "Value to use as this when executing callback."
+            //}],
+            var it = this.iterator();
+            while(it.hasNext()){
+                var item = it.next();
+                func.call(thisArg || item,item);
+            }
+            return this;
+
+        },
+
+        "iterator" : function() {
+            throw new Error('Unimplemented API');
+        },
+
+        "toArray": function() {
+            //desc: "Returns an array containing all of the items in this collection in proper sequence (from first to last item).",
+            //result: {
+            //    type: Array,
+            //    desc: "an array containing all of the elements in this collection in proper sequence"
+            //},
+            //params: [],
+            var items = [],
+                it = this.iterator();
+            while(!it.hasNext()){
+                items.push(it.next());
+            }
+            return items;
+        }
+    });
+
+    return Collection;
 });
 
-/**
- * skylark-ui-swt - A version of ui-swt that ported to running on skylarkjs
- * @author Hudaokeji, Inc.
- * @version v0.9.0
- * @link https://github.com/skylarkui/skylark-ui-swt/
- * @license MIT
- */
+
+define('skylark-data-collection/Map',[
+    "./collections",
+    "./Collection"
+], function( collections, Collection) {
+
+    var Map = collections.Map = Collection.inherit({
+
+        "klassName": "Map",
+
+        _getInnerItems : function() {
+            return this._items;
+        },
+
+        _clear : function() {
+            this._items = [];
+        },
+
+        _findKeyByRegExp: function(regExp, callback) {
+            var items = this._getInnerItems();
+            return items.filter(function(key) {
+                if (key.match(regExp)) {
+                    if (callback) callback(key);
+                    return true;
+                } else {
+                    return false;
+                }
+            });
+        },
+
+        "get":  function(strKey, silent) {
+            //desc: "Returns the item at the specified key in the Hashtable.",
+            //result: {
+            //    type: Object,
+            //    desc: "The item at the specified key."
+            //},
+            //params: [{
+            //    name: "strKey",
+            //    type: String,
+            //    desc: "The key of the item to return."
+            //}, {
+            //    name: "silent",
+            //    type: Boolean,
+            //    desc: "the silent flag.",
+            //    optional: true
+            //}],
+            if (typeof(strKey) != "string") {
+                throw "hash key is not string!";
+            }
+            /*
+            if (!silent && !this.contains(strKey)) {
+                throw "hash key is not  existed";
+            }
+            */
+            var items = this._getInnerItems();
+            return items[strKey];
+        },
+
+        "iterator" : function() {
+            var i =0;
+            return {
+                hasNext : function() {
+                    return i < this._items.length;
+                },
+                next : function() {
+                    var key =  this._items[i++];
+                    return [this._items[key],key];
+                }
+            }
+        },
+
+        "set": function( /*String*/ strKey, /*Object*/ value) {
+            //desc: "Replaces the item at the specified key in the Hashtable with the specified item.",
+            //result: {
+            //    type: Map,
+            //    desc: "this instance for chain call."
+            //},
+            //params: [{
+            //    name: "strKey",
+            //    type: String,
+            //    desc: "key of the item to replace."
+            //}, {
+            //    name: "value",
+            //    type: Object,
+            //    desc: "item to be stored at the specified position."
+            //}],
+            if (typeof(strKey) != "string") {
+                throw "hash key is not string!";
+            }
+
+            /*
+            if (!this.contains(strKey)) {
+                throw "hash key is not existed";
+            }
+            */
+
+            var items = this._getInnerItems();
+            if (items.indexOf(strKey) == -1) {
+                items.push(strKey);
+            }
+            var oldValue = items[strKey];
+            if (oldValue !== value) {
+                items[strKey] = value;
+                var updated = {};
+                updated[strKey] = {
+                    name : strKey,
+                    value : value,
+                    oldValue : oldValue
+                };
+                this.trigger("changed" ,{ //TODO: "changed:"+ strKey
+                    data : updated
+                });
+            }
+            return this;
+        },
+
+
+        "remove": function( /*String*/ strKey) {
+            //desc: "Removes the first occurrence of a specific item from the Hashtable",
+            //result: {
+            //    type: Map,
+            //    desc: "this instance for chain call."
+            //},
+            //params: [{
+            //    name: "strKey",
+            //    type: String,
+            //    desc: "The key for The item to remove from the Hashtable."
+            //}],
+            if (typeof(strKey) != "string") {
+                throw "hash key is not string!";
+            }
+            var items = this._getInnerItems();
+            var idx = items.indexOf(strKey);
+            if (idx >= 0) {
+                delete items[strKey];
+                delete items[idx];
+            }
+        },
+
+        findByRegExp: function( /*String*/ regExp, callback) {
+            //desc: "find regExp items",
+            //result: {
+            //    type: Map,
+            //    desc: "this instance for chain call."
+            //},
+            //params: [{
+            //    name: "regExp",
+            //    type: String,
+            //    desc: "The key for The item to remove from the Hashtable."
+            //}, {
+            //    name: "callback",
+            //    type: Function,
+            //    desc: "the callback method"
+            //}],
+            var items = [],
+                self = this;
+            this._findKeyByRegExp(regExp, function(key) {
+                var item = self.get(key);
+                if (callback) callback(item);
+                items.push(item);
+            });
+            return items;
+        },
+
+        removeByRegExp: function( /*String*/ regExp) {
+            //desc: "Removes regExp items",
+            //result: {
+            //    type: Map,
+            //    desc: "this instance for chain call."
+            //},
+            //params: [{
+            //    name: "regExp",
+            //    type: String,
+            //    desc: "The key for The item to remove from the Hashtable."
+            //}],
+            var self = this;
+            this._findKeyByRegExp(regExp, function(key) {
+                self.remove(key);
+            });
+        },
+
+        "toPlain": function() {
+            //desc: "Returns a plain object containing all of the items in this Hashable.",
+            //result: {
+            //    type: Object,
+            //    desc: "a plain object containing all of the items in this Hashtable."
+            //},
+            //params: [],
+            var items = this._getInnerItems(); 
+
+            for (var i = 0; i < items.length; i++) {
+                var key = items[i];
+                plain[key] = items[key];
+            }
+            return plain;
+        },
+
+        "toString": function( /*String?*/ delim) {
+            //desc: "implementation of toString, follows [].toString().",
+            //result: {
+            //    type: String,
+            //   desc: "The string."
+            //},
+            //params: [{
+            //    name: "delim",
+            //    type: String,
+            //    desc: "The delim ",
+            //    optional: true
+            //}],
+            var items = this._getInnerItems();
+
+            return items.join((delim || ","));
+        },
+
+        "init": function( /*Object*/ data) {
+            var items = this._items = [];
+            for (var name in data) {
+                items.push(name);
+                items[name]= data[name];
+            }
+        }
+       
+    });
+    return Map;
+});
+
 define('skylark-ui-swt/Widget',[
-  "skylark-utils/skylark",
-  "skylark-utils/langx",
-  "skylark-utils/browser",
-  "skylark-utils/eventer",
-  "skylark-utils/noder",
-  "skylark-utils/geom",
-  "skylark-utils/query",
-  "skylark-utils/widgets",
-  "./ui"
-],function(skylark,langx,browser,eventer,noder,geom,$,widgets,ui){
+  "skylark-langx/skylark",
+  "skylark-langx/langx",
+  "skylark-utils-dom/browser",
+  "skylark-utils-dom/datax",
+  "skylark-utils-dom/eventer",
+  "skylark-utils-dom/noder",
+  "skylark-utils-dom/geom",
+  "skylark-utils-dom/elmx",
+  "skylark-utils-dom/query",
+  "skylark-utils-dom/plugins",
+  "skylark-data-collection/Map",
+  "./swt"
+],function(skylark,langx,browser,datax,eventer,noder,geom,elmx,$,plugins,Map,swt){
 
 /*---------------------------------------------------------------------------------*/
 
-	var Widget = widgets.Widget.inherit({
-        klassName: "Widget"
-    });
+	var Widget = plugins.Plugin.inherit({
+    klassName: "Widget",
 
-	return ui.Widget = Widget;
+    _elmx : elmx,
+
+    _construct : function(elm,options) {
+        if (langx.isHtmlNode(elm)) {
+          options = this._parse(elm,options);
+        } else {
+          options = elm;
+          elm = null;
+        }
+        this.overrided(elm,options);
+
+        if (!elm) {
+          this._velm = this._create();
+          this._elm = this._velm.elm();
+        } else {
+          this._velm = elmx(this._elm);
+        }
+        
+        Object.defineProperty(this,"state",{
+          value :this.options.state || new Map()
+        });
+
+        //this.state = this.options.state || new Map();
+        this._init();
+     },
+
+    /**
+     * Parses widget options from attached element.
+     * This is a callback method called by constructor when attached element is specified.
+     * @method _parse
+     * @return {Object} options.
+     */
+    _parse : function(elm,options) {
+      var optionsAttr = datax.data(elm,"options");
+      if (optionsAttr) {
+         var options1 = JSON.parse("{" + optionsAttr + "}");
+         options = langx.mixin(options1,options); 
+      }
+      return options || {};
+    },
+
+
+    /**
+     * Create html element for this widget.
+     * This is a callback method called by constructor when attached element is not specified.
+     * @method _create
+     */
+    _create : function() {
+        var template = this.options.template;
+        if (template) {
+          return this._elmx(template);
+        } else {
+          throw new Error("The template is not existed in options!");
+        }
+    },
+
+
+    /**
+     * Init widget.
+     * This is a callback method called by constructor.
+     * @method _init
+     */
+    _init : function() {
+      var self = this;
+      if (this.widgetClass) {
+        this._velm.addClass(this.widgetClass);
+      }
+      this.state.on("changed",function(e,args) {
+        self._refresh(args.data);
+      });
+    },
+
+
+    /**
+     * Startup widget.
+     * This is a callback method called when widget element is added into dom.
+     * @method _post
+     */
+    _startup : function() {
+
+    },
+
+
+    /**
+     * Refresh widget.
+     * This is a callback method called when widget state is changed.
+     * @method _refresh
+     */
+    _refresh : function(updates) {
+      /*
+      var _ = this._,
+          model = _.model,
+          dom = _.dom,
+          props = {
+
+          };
+      updates = updates || {};
+      for (var attrName in updates){
+          var v = updates[attrName].value;
+          if (v && v.toCss) {
+              v.toCss(props);
+              updates[attrName].processed = true;
+          }
+
+      };
+
+      this.css(props);
+
+      if (updates["disabled"]) {
+          var v = updates["disabled"].value;
+          dom.aria('disabled', v);
+          self.classes.toggle('disabled', v);
+      }
+      */
+    },                
+
+    mapping : {
+      "events" : {
+  //       'mousedown .title':  'edit',
+  //       'click .button':     'save',
+  //       'click .open':       function(e) { ... }            
+      },
+
+      "attributs" : {
+
+      },
+
+      "properties" : {
+
+      },
+
+      "styles" : {
+
+      }
+    },
+
+    addon : function(categoryName,addonName,setting) {
+      this._addons = this.addons || {};
+      var category = this._addons[categoryName] = this._addons[categoryName] || {};
+      if (setting === undefined) {
+        return category[addonName] || null;      
+      } else {
+        category[addonName] = setting;
+        return this;
+      }
+    },
+
+    addons : function(categoryName,settings) {
+      this._addons = this.addons || {};
+      var category = this._addons[categoryName] = this._addons[categoryName] || {};
+
+      if (settings == undefined) {
+        return langx.clone(category || null);
+      } else {
+        langx.mixin(category,settings);
+      }
+    },
+
+
+    /**
+     * Returns a html element representing the widget.
+     *
+     * @method render
+     * @return {HtmlElement} HTML element representing the widget.
+     */
+    render: function() {
+      return this._elm;
+    },
+
+
+    /**
+     * Returns a parent widget  enclosing this widgets, or null if not exist.
+     *
+     * @method getEnclosing
+     * @return {Widget} The enclosing parent widget, or null if not exist.
+     */
+    getEnclosing : function(selector) {
+      return null;
+    },
+
+    /**
+     * Returns a widget collection with all enclosed child widgets.
+     *
+     * @method getEnclosed
+     * @return {List} Collection with all enclosed child widgets..
+     */
+    getEnclosed : function() {
+      var self = this;
+          children = new ArrayList();
+      return children;
+    },
+
+    /**
+     * Sets the visible state to true.
+     *
+     * @method show
+     * @return {Widget} Current widget instance.
+     */
+
+    show : function() {
+      this._velm.show();
+    },
+
+    /**
+     * Sets the visible state to false.
+     *
+     * @method hide
+     * @return {Widget} Current widget instance.
+     */
+    hide : function() {
+      this._velm.hide();
+    },
+
+    /**
+     * Focuses the current widget.
+     *
+     * @method focus
+     * @return {Widget} Current widget instance.
+     */
+    focus :function() {
+      try {
+        this._velm.focus();
+      } catch (ex) {
+        // Ignore IE error
+      }
+
+      return this;
+    },
+
+    /**
+     * Blurs the current widget.
+     *
+     * @method blur
+     * @return {Widget} Current widget instance.
+     */
+    blur : function() {
+      this._velm.blur();
+
+      return this;
+    },
+
+    enable: function () {
+      this.state.set('disabled',false);
+      return this;
+    },
+
+    disable: function () {
+      this.state.set('disabled',true);
+      return this;
+    },
+
+    /**
+     * Sets the specified aria property.
+     *
+     * @method aria
+     * @param {String} name Name of the aria property to set.
+     * @param {String} value Value of the aria property.
+     * @return {Widget} Current widget instance.
+     */
+    aria : function(name, value) {
+      const self = this, elm = self.getEl(self.ariaTarget);
+
+      if (typeof value === 'undefined') {
+        return self._aria[name];
+      }
+
+      self._aria[name] = value;
+
+      if (self.state.get('rendered')) {
+        elm.setAttribute(name === 'role' ? name : 'aria-' + name, value);
+      }
+
+      return self;
+    },
+
+    attr: function (name,value) {
+        var velm = this._velm,
+            ret = velm.attr(name,value);
+        return ret == velm ? this : ret;
+    },
+
+    css: function (name, value) {
+        var velm = this._velm,
+            ret = velm.css(name, value);
+        return ret == velm ? this : ret;
+    },
+
+    data: function (name, value) {
+        var velm = this._velm,
+            ret = velm.data(name,value);
+        return ret == velm ? this : ret;
+    },
+
+    prop: function (name,value) {
+        var velm = this._velm,
+            ret = velm.prop(name,value);
+        return ret == velm ? this : ret;
+    },
+
+    throb: function(params) {
+      return noder.throb(this._elm,params);
+    },
+
+
+    /**
+     *  Attach the current widget element to dom document.
+     *
+     * @method attach
+     * @return {Widget} This Widget.
+     */
+    attach : function(target,position){
+        var elm = target;
+        if (!position || position=="child") {
+            noder.append(elm,this._elm);
+        } else  if (position == "before") {
+            noder.before(elm,this._elm);
+        } else if (position == "after") {
+            noder.after(elm,this._elm);
+        }
+        this._startup();
+    },
+
+    /**
+     *  Detach the current widget element from dom document.
+     *
+     * @method html
+     * @return {HtmlElement} HTML element representing the widget.
+     */
+    detach : function() {
+      this._velm.remove();
+    }
+  });
+
+  Widget.inherit = function(meta) {
+    var ctor = plugins.Plugin.inherit.apply(this,arguments);
+
+    function addStatePropMethod(name) {
+        ctor.prototype[name] = function(value) {
+          if (value !== undefined) {
+            this.state.set(name,value);
+            return this;
+          } else {
+            return this.state.get(name);
+          }
+        };
+    }
+    if (meta.state) {
+      for (var name in meta.state) {
+          addStatePropMethod(name);
+      }
+    }
+
+    if (meta.pluginName) {
+      plugins.register(ctor,meta.pluginName);
+    }
+    return ctor;
+  };
+
+  Widget.register = function(ctor,widgetName) {
+    var meta = ctor.prototype,
+        pluginName = widgetName || meta.pluginName;
+
+    function addStatePropMethod(name) {
+        ctor.prototype[name] = function(value) {
+          if (value !== undefined) {
+            this.state.set(name,value);
+            return this;
+          } else {
+            return this.state.get(name);
+          }
+        };
+    }
+    if (meta.state) {
+      for (var name in meta.state) {
+          addStatePropMethod(name);
+      }
+    }
+
+    if (pluginName) {
+      plugins.register(ctor,pluginName);
+    }
+    return ctor;
+  };
+
+	return swt.Widget = Widget;
 });
 
 define('skylark-ui-colorpicker/ColorPicker',[
    "skylark-langx/skylark",
     "skylark-langx/langx",
-    "skylark-utils/browser",
-    "skylark-utils/noder",
-    "skylark-utils/eventer",
-    "skylark-utils/finder",
-    "skylark-utils/query",
-    "skylark-utils-color/colors",
-    "skylark-utils-color/Color",
-    "skylark-ui-swt/ui",
+    "skylark-utils-dom/browser",
+    "skylark-utils-dom/noder",
+    "skylark-utils-dom/eventer",
+    "skylark-utils-dom/finder",
+    "skylark-utils-dom/query",
+    "skylark-data-color/colors",
+    "skylark-data-color/Color",
+    "skylark-ui-swt/swt",
     "skylark-ui-swt/Widget"
-],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, ui, Widget) {
+],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, swt, Widget) {
     "use strict";
 
     var noop = langx.noop;
@@ -11879,7 +13230,7 @@ define('skylark-ui-colorpicker/ColorPicker',[
         return spect;
     }
 
-    var ColorPicker = Widget.inherit({
+    var ColorPicker = langx.Evented.inherit({
         klassName : "ColorPicker",
 
         init : init
@@ -12051,7 +13402,7 @@ define('skylark-ui-colorpicker/ColorPicker',[
                 if (spect) {
                     var method = spect[opts];
                     if (!method) {
-                        throw new Error( "Spectrum: no such method: '" + opts + "'" );
+                        throw new Error( "skylark-ui-colorpicker: no such method: '" + opts + "'" );
                     }
 
                     if (opts == "get") {
@@ -12094,7 +13445,7 @@ define('skylark-ui-colorpicker/ColorPicker',[
 
     $.fn.colorPicker = Plugin;
 
-    return ColorPicker;
+    return skylark.attach("ui.ColorPicker",ColorPicker);
 
 });
 
@@ -12257,20 +13608,20 @@ define('skylark-ui-gradienter/Drag',[],function() {
     return Drag;
 });
 define('skylark-ui-gradienter/Gradienter',[
-   "skylark-langx/skylark",
+    "skylark-langx/skylark",
     "skylark-langx/langx",
-    "skylark-utils/browser",
-    "skylark-utils/noder",
-    "skylark-utils/eventer",
-    "skylark-utils/finder",
-    "skylark-utils/query",
-    "skylark-utils-color/colors",
-    "skylark-utils-color/Color",
-    "skylark-ui-swt/ui",
+    "skylark-utils-dom/browser",
+    "skylark-utils-dom/noder",
+    "skylark-utils-dom/eventer",
+    "skylark-utils-dom/finder",
+    "skylark-utils-dom/query",
+    "skylark-data-color/colors",
+    "skylark-data-color/Color",
+    "skylark-ui-swt/swt",
     "skylark-ui-swt/Widget",
     "skylark-ui-colorpicker/ColorPicker",
     "./Drag"
-],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, ui, Widget,ColorPicker,Drag) {
+],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, swt, Widget,ColorPicker,Drag) {
 
 
     /*
@@ -12310,7 +13661,7 @@ define('skylark-ui-gradienter/Gradienter',[
     }
 
 
-    var gradX = ui.Gradienter = function(id, _options) {
+    var gradX  = function(id, _options) {
 
 
         var options = {
@@ -12848,7 +14199,7 @@ define('skylark-ui-gradienter/Gradienter',[
                     // Work around Chrome's little problem
                     $this.mouseup(function() {
                         // Prevent further mouseup intervention
-                        $this.unbind("mouseup");
+                        $this.off("mouseup");
                         return false;
                     });
                 });
@@ -13018,7 +14369,7 @@ define('skylark-ui-gradienter/Gradienter',[
 
     };
 
-    return gradX;
+    return skylark.attach("ui.Gradienter",gradX);
 });
 define('skylark-ui-gradienter/main',[
     "./Gradienter",
