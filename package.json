@@ -14,10 +14,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/skylarkui/skylark-ui-gradient.git"
+    "url": "https://github.com/skylarkui/skylark-ui-gradienter.git"
   },
   "bugs": {
-    "url": "https://github.com/skylarkui/skylark-bs-gradient/issues"
+    "url": "https://github.com/skylarkui/skylark-ui-gradienter/issues"
   },
   "license": "MIT",
   "dependencies": {
@@ -25,7 +25,8 @@
     "skylark-data-color": "https://github.com/skylark-data/skylark-data-color#master",
     "skylark-domx-interact": "https://github.com/skylark-domx/skylark-domx-interact#master",
     "skylark-ui-swt": "https://github.com/skylarkui/skylark-ui-swt#master",
-    "skylark-ui-colorpicker": "https://github.com/skylarkui/skylark-ui-colorpicker#master"
+    "skylark-ui-colorpicker": "https://github.com/skylarkui/skylark-ui-colorpicker#master",
+    "skylark-utils-dom": "https://github.com/skylarkutils/skylark-utils-dom#master"
   },
   "engines": {
     "node": ">=0.10.1"
