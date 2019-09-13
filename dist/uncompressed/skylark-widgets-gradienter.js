@@ -1,8 +1,8 @@
 /**
- * skylark-ui-gradienter - The skylark gradient picker widget
+ * skylark-widgets-gradienter - The skylark gradient picker widget
  * @author Hudaokeji, Inc.
  * @version v0.9.0
- * @link https://github.com/skylarkui/skylark-ui-gradienter/
+ * @link https://github.com/skylark-widgets/skylark-widgets-gradienter/
  * @license MIT
  */
 (function(factory,globals) {
@@ -86,7 +86,7 @@
 
 })(function(define,require) {
 
-define('skylark-ui-gradienter/Drag',[],function() {
+define('skylark-widgets-gradienter/Drag',[],function() {
     /**************************************************
      * dom-drag.js
      * 09.25.2001
@@ -244,7 +244,7 @@ define('skylark-ui-gradienter/Drag',[],function() {
 
     return Drag;
 });
-define('skylark-ui-gradienter/Gradienter',[
+define('skylark-widgets-gradienter/Gradienter',[
     "skylark-langx/skylark",
     "skylark-langx/langx",
     "skylark-utils-dom/browser",
@@ -254,9 +254,9 @@ define('skylark-ui-gradienter/Gradienter',[
     "skylark-utils-dom/query",
     "skylark-data-color/colors",
     "skylark-data-color/Color",
-    "skylark-ui-swt/swt",
-    "skylark-ui-swt/Widget",
-    "skylark-ui-colorpicker/ColorPicker",
+    "skylark-widgets-swt/swt",
+    "skylark-widgets-swt/Widget",
+    "skylark-widgets-colorpicker/ColorPicker",
     "./Drag"
 ],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, swt, Widget,ColorPicker,Drag) {
 
@@ -1008,14 +1008,14 @@ define('skylark-ui-gradienter/Gradienter',[
 
     return skylark.attach("ui.Gradienter",gradX);
 });
-define('skylark-ui-gradienter/main',[
+define('skylark-widgets-gradienter/main',[
     "./Gradienter",
 ], function(Gradienter) {
     return Gradienter;
 });
 
-define('skylark-ui-gradienter', ['skylark-ui-gradienter/main'], function (main) { return main; });
+define('skylark-widgets-gradienter', ['skylark-widgets-gradienter/main'], function (main) { return main; });
 
 
 },this);
-//# sourceMappingURL=sourcemaps/skylark-ui-gradienter.js.map
+//# sourceMappingURL=sourcemaps/skylark-widgets-gradienter.js.map
