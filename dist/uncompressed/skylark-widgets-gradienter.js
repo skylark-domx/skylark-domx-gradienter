@@ -1006,7 +1006,7 @@ define('skylark-widgets-gradienter/Gradienter',[
 
     };
 
-    return skylark.attach("ui.Gradienter",gradX);
+    return skylark.attach("widgets.Gradienter",gradX);
 });
 define('skylark-widgets-gradienter/main',[
     "./Gradienter",

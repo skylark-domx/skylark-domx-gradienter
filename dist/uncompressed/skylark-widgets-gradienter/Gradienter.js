@@ -760,5 +760,5 @@ define([
 
     };
 
-    return skylark.attach("ui.Gradienter",gradX);
+    return skylark.attach("widgets.Gradienter",gradX);
 });
