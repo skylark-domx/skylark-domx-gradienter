@@ -9,7 +9,7 @@ define([
     "skylark-domx-plugins",    
     "skylark-data-color/colors",
     "skylark-data-color/Color",
-    "skylark-widgets-colorpicker/ColorPicker",
+    "skylark-domx-colorpicker/ColorPicker",
     "./Drag"
 ],function(skylark, langx, browser, noder, eventer,finder, $, plugins,colors, Color, ColorPicker,Drag) {
 
@@ -479,7 +479,7 @@ define([
                             "    <option value='linear'>Linear</option>\n"+
                             "    <option value='circle'>Radial - Circle</option>\n"+
                             "    <option value='ellipse'>Radial - Ellipse</option>\n"+
-                            "</select>\n\
+                            "</select>\n"+
                             "<select id='gradx_gradient_subtype' class='gradx_gradient_type'>\n"+
                             "    <option id='gradx_gradient_subtype_desc' value='gradient-direction' disabled>gradient direction</option>\n"+
                             "    <option value='left' selected>Left</option>\n"+
