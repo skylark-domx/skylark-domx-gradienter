@@ -1,5 +1,5 @@
 {
-  "name": "skylark-widgets-gradienter",
+  "name": "skylark-domx-gradienter",
   "description": "The skylark gradient picker widget",
   "version": "0.9.0",
   "keywords": [
@@ -7,25 +7,24 @@
     "less",
     "gradient"
   ],
-  "homepage": "https://github.com/skylark-widgets/skylark-widgets-gradienter/",
+  "homepage": "https://github.com/skylark-domx/skylark-domx-gradienter/",
   "author": "Hudaokeji, Inc.",
   "scripts": {
     "build": "sbundle build ."
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/skylark-widgets/skylark-widgets-gradienter.git"
+    "url": "https://github.com/skylark-domx/skylark-domx-gradienter.git"
   },
   "bugs": {
-    "url": "https://github.com/skylark-widgets/skylark-widgets-gradienter/issues"
+    "url": "https://github.com/skylark-domx/skylark-domx-gradienter/issues"
   },
   "license": "MIT",
   "dependencies": {
     "skylark-data-color": "git+https://github.com/skylark-data/skylark-data-color.git#master",
+    "skylark-domx-colorpicker": "git+https://github.com/skylark-domx/skylark-domx-colorpicker.git#master",
     "skylark-domx-interact": "git+https://github.com/skylark-domx/skylark-domx-interact.git#master",
-    "skylark-langx": "git+https://github.com/skylark-langx/skylark-langx.git#master",
-    "skylark-widgets-colorpicker": "git+https://github.com/skylark-widgets/skylark-widgets-colorpicker.git#master",
-    "skylark-widgets-swt": "git+https://github.com/skylark-widgets/skylark-widgets-swt.git#master"
+    "skylark-langx": "git+https://github.com/skylark-langx/skylark-langx.git#master"
   },
   "engines": {
     "node": ">=0.10.1"

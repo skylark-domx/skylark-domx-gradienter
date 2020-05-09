@@ -1,250 +1,4 @@
-/**
- * skylark-widgets-gradienter - The skylark gradient picker widget
- * @author Hudaokeji, Inc.
- * @version v0.9.0
- * @link https://github.com/skylark-widgets/skylark-widgets-gradienter/
- * @license MIT
- */
-(function(factory,globals) {
-  var define = globals.define,
-      require = globals.require,
-      isAmd = (typeof define === 'function' && define.amd),
-      isCmd = (!isAmd && typeof exports !== 'undefined');
-
-  if (!isAmd && !define) {
-    var map = {};
-    function absolute(relative, base) {
-        if (relative[0]!==".") {
-          return relative;
-        }
-        var stack = base.split("/"),
-            parts = relative.split("/");
-        stack.pop(); 
-        for (var i=0; i<parts.length; i++) {
-            if (parts[i] == ".")
-                continue;
-            if (parts[i] == "..")
-                stack.pop();
-            else
-                stack.push(parts[i]);
-        }
-        return stack.join("/");
-    }
-    define = globals.define = function(id, deps, factory) {
-        if (typeof factory == 'function') {
-            map[id] = {
-                factory: factory,
-                deps: deps.map(function(dep){
-                  return absolute(dep,id);
-                }),
-                resolved: false,
-                exports: null
-            };
-            require(id);
-        } else {
-            map[id] = {
-                factory : null,
-                resolved : true,
-                exports : factory
-            };
-        }
-    };
-    require = globals.require = function(id) {
-        if (!map.hasOwnProperty(id)) {
-            throw new Error('Module ' + id + ' has not been defined');
-        }
-        var module = map[id];
-        if (!module.resolved) {
-            var args = [];
-
-            module.deps.forEach(function(dep){
-                args.push(require(dep));
-            })
-
-            module.exports = module.factory.apply(globals, args) || null;
-            module.resolved = true;
-        }
-        return module.exports;
-    };
-  }
-  
-  if (!define) {
-     throw new Error("The module utility (ex: requirejs or skylark-utils) is not loaded!");
-  }
-
-  factory(define,require);
-
-  if (!isAmd) {
-    var skylarkjs = require("skylark-langx/skylark");
-
-    if (isCmd) {
-      module.exports = skylarkjs;
-    } else {
-      globals.skylarkjs  = skylarkjs;
-    }
-  }
-
-})(function(define,require) {
-
-define('skylark-widgets-gradienter/Drag',[],function() {
-    /**************************************************
-     * dom-drag.js
-     * 09.25.2001
-     * www.youngpup.net
-     **************************************************
-     * 10.28.2001 - fixed minor bug where events
-     * sometimes fired off the handle, not the root.
-     **************************************************/
-
-    var Drag = {
-
-        obj : null,
-
-        gradx : null,
-
-        init : function(o, oRoot, minX, maxX, minY, maxY, bSwapHorzRef, bSwapVertRef, fXMapper, fYMapper)
-        {
-            o.onmousedown	= Drag.start;
-
-            o.hmode			= bSwapHorzRef ? false : true ;
-            o.vmode			= bSwapVertRef ? false : true ;
-
-            o.root = oRoot && oRoot != null ? oRoot : o ;
-
-            if (o.hmode  && isNaN(parseInt(o.root.style.left  ))) o.root.style.left   = "0px";
-           //if (o.vmode  && isNaN(parseInt(o.root.style.top   ))) o.root.style.top    = "0px";
-            if (!o.hmode && isNaN(parseInt(o.root.style.right ))) o.root.style.right  = "0px";
-           // if (!o.vmode && isNaN(parseInt(o.root.style.bottom))) o.root.style.bottom = "0px";
-
-            o.minX	= typeof minX != 'undefined' ? minX : null;
-            o.minY	= typeof minY != 'undefined' ? minY : null;
-            o.maxX	= typeof maxX != 'undefined' ? maxX : null;
-            o.maxY	= typeof maxY != 'undefined' ? maxY : null;
-
-            o.xMapper = fXMapper ? fXMapper : null;
-            o.yMapper = fYMapper ? fYMapper : null;
-
-            o.root.onDragStart	= new Function();
-            o.root.onDragEnd	= new Function();
-            o.root.onDrag		= new Function();
-        },
-
-        start : function(e)
-        {
-            Drag.gradx.current_slider_id = "#"+this.id;
-
-            var o = Drag.obj = this;
-            e = Drag.fixE(e);
-            var y = parseInt(o.vmode ? o.root.style.top  : o.root.style.bottom);
-            var x = parseInt(o.hmode ? o.root.style.left : o.root.style.right );
-            o.root.onDragStart(x, y);
-
-            o.lastMouseX	= e.clientX;
-            o.lastMouseY	= e.clientY;
-
-            if (o.hmode) {
-                if (o.minX != null)	o.minMouseX	= e.clientX - x + o.minX;
-                if (o.maxX != null)	o.maxMouseX	= o.minMouseX + o.maxX - o.minX;
-            } else {
-                if (o.minX != null) o.maxMouseX = -o.minX + e.clientX + x;
-                if (o.maxX != null) o.minMouseX = -o.maxX + e.clientX + x;
-            }
-
-            if (o.vmode) {
-                if (o.minY != null)	o.minMouseY	= e.clientY - y + o.minY;
-                if (o.maxY != null)	o.maxMouseY	= o.minMouseY + o.maxY - o.minY;
-            }
-            else {
-                if (o.minY != null) o.maxMouseY = -o.minY + e.clientY + y;
-                if (o.maxY != null) o.minMouseY = -o.maxY + e.clientY + y;
-            }
-
-            document.onmousemove	= Drag.drag;
-            document.onmouseup	= Drag.end;
-
-            return false;
-        },
-
-        drag : function(e)
-        {
-            e = Drag.fixE(e);
-            var o = Drag.obj;
-
-            Drag.gradx.update_style_array();
-            Drag.gradx.apply_style(Drag.gradx.panel, Drag.gradx.get_style_value());
-            var left = Drag.gradx.gx("#"+o.id).css("left");
-
-
-            if(parseInt(left) > 60 && parseInt(left) < 390) {
-                Drag.gradx.gx("#gradx_slider_info") //info element cached before
-                .css("left",left)
-                .show();
-                         
-            }/*else {
-                if(parseInt(left) > 120) {
-                    left = "272px";
-                }else{
-                    left = "120px";
-                }
-                    
-                gradx.gx("#gradx_slider_info") //info element cached before
-                .css("left",left)
-                .show();
-                     
-            }*/
-             var color = Drag.gradx.gx("#"+o.id).css("backgroundColor");
-            //but what happens if @color is not in RGB ? :(
-            var rgb = Drag.gradx.get_rgb_obj(color);
-            Drag.gradx.cp.colorPicker("set",rgb);
-
-
-            var ey	= e.clientY;
-            var ex	= e.clientX;
-            var y = parseInt(o.vmode ? o.root.style.top  : o.root.style.bottom);
-            var x = parseInt(o.hmode ? o.root.style.left : o.root.style.right );
-            var nx, ny;
-
-            if (o.minX != null) ex = o.hmode ? Math.max(ex, o.minMouseX) : Math.min(ex, o.maxMouseX);
-            if (o.maxX != null) ex = o.hmode ? Math.min(ex, o.maxMouseX) : Math.max(ex, o.minMouseX);
-            if (o.minY != null) ey = o.vmode ? Math.max(ey, o.minMouseY) : Math.min(ey, o.maxMouseY);
-            if (o.maxY != null) ey = o.vmode ? Math.min(ey, o.maxMouseY) : Math.max(ey, o.minMouseY);
-
-            nx = x + ((ex - o.lastMouseX) * (o.hmode ? 1 : -1));
-            ny = y + ((ey - o.lastMouseY) * (o.vmode ? 1 : -1));
-
-            if (o.xMapper)		nx = o.xMapper(y)
-            else if (o.yMapper)	ny = o.yMapper(x)
-
-            Drag.obj.root.style[o.hmode ? "left" : "right"] = nx + "px";
-            //Drag.obj.root.style[o.vmode ? "top" : "bottom"] = ny + "px";
-            Drag.obj.lastMouseX	= ex;
-            Drag.obj.lastMouseY	= ey;
-
-            Drag.obj.root.onDrag(nx, ny);
-            return false;
-        },
-
-        end : function()
-        {
-            document.onmousemove = null;
-            document.onmouseup   = null;
-            Drag.obj.root.onDragEnd(	parseInt(Drag.obj.root.style[Drag.obj.hmode ? "left" : "right"]), 
-                parseInt(Drag.obj.root.style[Drag.obj.vmode ? "top" : "bottom"]));
-            Drag.obj = null;
-        },
-
-        fixE : function(e)
-        {
-            if (typeof e == 'undefined') e = window.event;
-            if (typeof e.layerX == 'undefined') e.layerX = e.offsetX;
-            if (typeof e.layerY == 'undefined') e.layerY = e.offsetY;
-            return e;
-        }
-    };
-
-    return Drag;
-});
-define('skylark-widgets-gradienter/Gradienter',[
+define([
     "skylark-langx/skylark",
     "skylark-langx/langx",
     "skylark-domx-browser",
@@ -252,13 +6,12 @@ define('skylark-widgets-gradienter/Gradienter',[
     "skylark-domx-eventer",
     "skylark-domx-finder",
     "skylark-domx-query",
+    "skylark-domx-plugins",    
     "skylark-data-color/colors",
     "skylark-data-color/Color",
-    "skylark-widgets-swt/swt",
-    "skylark-widgets-swt/Widget",
     "skylark-widgets-colorpicker/ColorPicker",
     "./Drag"
-],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, swt, Widget,ColorPicker,Drag) {
+],function(skylark, langx, browser, noder, eventer,finder, $, plugins,colors, Color, ColorPicker,Drag) {
 
 
     /*
@@ -719,42 +472,42 @@ define('skylark-widgets-gradienter/Gradienter',[
                 this.id = id.replace("#", "");
                 id = this.id;
                 this.current_slider_id = false;
-                var html = "<div class='gradx'>\n\
-                            <div id='gradx_add_slider' class='gradx_add_slider gradx_btn'><i class='icon icon-add'></i>add</div>\n\
-                            <div class='gradx_slectboxes'>\n\
-                            <select id='gradx_gradient_type' class='gradx_gradient_type'>\n\
-                                <option value='linear'>Linear</option>\n\
-                                <option value='circle'>Radial - Circle</option>\n\
-                                <option value='ellipse'>Radial - Ellipse</option>\n\
-                            </select>\n\
-                            <select id='gradx_gradient_subtype' class='gradx_gradient_type'>\n\
-                                <option id='gradx_gradient_subtype_desc' value='gradient-direction' disabled>gradient direction</option>\n\
-                                <option value='left' selected>Left</option>\n\
-                                <option value='right'>Right</option>\n\
-                                <option value='top'>Top</option>\n\
-                                <option value='bottom'>Bottom</option>\n\
-                            </select>\n\
-                            <select id='gradx_gradient_subtype2' class='gradx_gradient_type gradx_hide'>\n\
-                            </select>\n\
-                            <select id='gradx_radial_gradient_size' class='gradx_gradient_type gradx_hide'>\n\
-                            </select>\n\
-                            </div>\n\
-                            <div class='gradx_container' id='gradx_" + id + "'>\n\
-                                <div id='gradx_stop_sliders_" + id + "'></div>\n\
-                                <div class='gradx_panel' id='gradx_panel_" + id + "'></div>\n\
-                                <div class='gradx_start_sliders' id='gradx_start_sliders_" + id + "'>\n\
-                                    <div class='cp-default' id='gradx_slider_info'>\n\
-                                        <div id='gradx_slider_controls'>\n\
-                                            <div id='gradx_delete_slider' class='gradx_btn'><i class='icon icon-remove'></i>delete</div>\n\
-                                        </div>\n\
-                                        <div id='gradx_slider_content'></div>\n\
-                                    </div> \n\
-                                </div>\n\
-                            </div>\n\
-                            <div id='gradx_show_code' class='gradx_show_code gradx_btn'><i class='icon icon-file-css'></i><span>show the code</span></div>\n\
-                            <div id='gradx_show_presets' style='display:none' class='gradx_show_presets gradx_btn'><i class='icon icon-preset'></i><span>show presets</span></div>\n\
-                            <textarea class='gradx_code' id='gradx_code'></textarea>\n\
-                        </div>";
+                var html = "<div class='gradx'>\n"+
+                            "<div id='gradx_add_slider' class='gradx_add_slider gradx_btn'><i class='icon icon-add'></i>add</div>\n"+
+                            "<div class='gradx_slectboxes'>\n"+
+                            "<select id='gradx_gradient_type' class='gradx_gradient_type'>\n"+
+                            "    <option value='linear'>Linear</option>\n"+
+                            "    <option value='circle'>Radial - Circle</option>\n"+
+                            "    <option value='ellipse'>Radial - Ellipse</option>\n"+
+                            "</select>\n\
+                            "<select id='gradx_gradient_subtype' class='gradx_gradient_type'>\n"+
+                            "    <option id='gradx_gradient_subtype_desc' value='gradient-direction' disabled>gradient direction</option>\n"+
+                            "    <option value='left' selected>Left</option>\n"+
+                            "    <option value='right'>Right</option>\n"+
+                            "    <option value='top'>Top</option>\n"+
+                            "    <option value='bottom'>Bottom</option>\n"+
+                            "</select>\n"+
+                            "<select id='gradx_gradient_subtype2' class='gradx_gradient_type gradx_hide'>\n"+
+                            "</select>\n"+
+                            "<select id='gradx_radial_gradient_size' class='gradx_gradient_type gradx_hide'>\n"+
+                            "</select>\n"+
+                            "</div>\n"+
+                            "<div class='gradx_container' id='gradx_" + id + "'>\n"+
+                            "    <div id='gradx_stop_sliders_" + id + "'></div>\n"+
+                            "    <div class='gradx_panel' id='gradx_panel_" + id + "'></div>\n"+
+                            "    <div class='gradx_start_sliders' id='gradx_start_sliders_" + id + "'>\n"+
+                            "        <div class='cp-default' id='gradx_slider_info'>\n"+
+                            "            <div id='gradx_slider_controls'>\n"+
+                            "                <div id='gradx_delete_slider' class='gradx_btn'><i class='icon icon-remove'></i>delete</div>\n"+
+                            "            </div>\n"+
+                            "            <div id='gradx_slider_content'></div>\n"+
+                            "        </div> \n"+
+                            "    </div>\n"+
+                            "</div>\n"+
+                            "<div id='gradx_show_code' class='gradx_show_code gradx_btn'><i class='icon icon-file-css'></i><span>show the code</span></div>\n"+
+                            "<div id='gradx_show_presets' style='display:none' class='gradx_show_presets gradx_btn'><i class='icon icon-preset'></i><span>show presets</span></div>\n"+
+                            "<textarea class='gradx_code' id='gradx_code'></textarea>\n"+
+                        "</div>";
 
                 this.me.html(html);
 
@@ -1006,16 +759,5 @@ define('skylark-widgets-gradienter/Gradienter',[
 
     };
 
-    return skylark.attach("widgets.Gradienter",gradX);
+    return skylark.attach("domx.Gradienter",gradX);
 });
-define('skylark-widgets-gradienter/main',[
-    "./Gradienter",
-], function(Gradienter) {
-    return Gradienter;
-});
-
-define('skylark-widgets-gradienter', ['skylark-widgets-gradienter/main'], function (main) { return main; });
-
-
-},this);
-//# sourceMappingURL=sourcemaps/skylark-widgets-gradienter.js.map

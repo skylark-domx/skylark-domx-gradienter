@@ -6,13 +6,12 @@ define([
     "skylark-domx-eventer",
     "skylark-domx-finder",
     "skylark-domx-query",
+    "skylark-domx-plugins",    
     "skylark-data-color/colors",
     "skylark-data-color/Color",
-    "skylark-widgets-swt/swt",
-    "skylark-widgets-swt/Widget",
     "skylark-widgets-colorpicker/ColorPicker",
     "./Drag"
-],function(skylark, langx, browser, noder, eventer,finder, $, colors, Color, swt, Widget,ColorPicker,Drag) {
+],function(skylark, langx, browser, noder, eventer,finder, $, plugins,colors, Color, ColorPicker,Drag) {
 
 
     /*
@@ -473,42 +472,42 @@ define([
                 this.id = id.replace("#", "");
                 id = this.id;
                 this.current_slider_id = false;
-                var html = "<div class='gradx'>\n\
-                            <div id='gradx_add_slider' class='gradx_add_slider gradx_btn'><i class='icon icon-add'></i>add</div>\n\
-                            <div class='gradx_slectboxes'>\n\
-                            <select id='gradx_gradient_type' class='gradx_gradient_type'>\n\
-                                <option value='linear'>Linear</option>\n\
-                                <option value='circle'>Radial - Circle</option>\n\
-                                <option value='ellipse'>Radial - Ellipse</option>\n\
-                            </select>\n\
-                            <select id='gradx_gradient_subtype' class='gradx_gradient_type'>\n\
-                                <option id='gradx_gradient_subtype_desc' value='gradient-direction' disabled>gradient direction</option>\n\
-                                <option value='left' selected>Left</option>\n\
-                                <option value='right'>Right</option>\n\
-                                <option value='top'>Top</option>\n\
-                                <option value='bottom'>Bottom</option>\n\
-                            </select>\n\
-                            <select id='gradx_gradient_subtype2' class='gradx_gradient_type gradx_hide'>\n\
-                            </select>\n\
-                            <select id='gradx_radial_gradient_size' class='gradx_gradient_type gradx_hide'>\n\
-                            </select>\n\
-                            </div>\n\
-                            <div class='gradx_container' id='gradx_" + id + "'>\n\
-                                <div id='gradx_stop_sliders_" + id + "'></div>\n\
-                                <div class='gradx_panel' id='gradx_panel_" + id + "'></div>\n\
-                                <div class='gradx_start_sliders' id='gradx_start_sliders_" + id + "'>\n\
-                                    <div class='cp-default' id='gradx_slider_info'>\n\
-                                        <div id='gradx_slider_controls'>\n\
-                                            <div id='gradx_delete_slider' class='gradx_btn'><i class='icon icon-remove'></i>delete</div>\n\
-                                        </div>\n\
-                                        <div id='gradx_slider_content'></div>\n\
-                                    </div> \n\
-                                </div>\n\
-                            </div>\n\
-                            <div id='gradx_show_code' class='gradx_show_code gradx_btn'><i class='icon icon-file-css'></i><span>show the code</span></div>\n\
-                            <div id='gradx_show_presets' style='display:none' class='gradx_show_presets gradx_btn'><i class='icon icon-preset'></i><span>show presets</span></div>\n\
-                            <textarea class='gradx_code' id='gradx_code'></textarea>\n\
-                        </div>";
+                var html = "<div class='gradx'>\n"+
+                            "<div id='gradx_add_slider' class='gradx_add_slider gradx_btn'><i class='icon icon-add'></i>add</div>\n"+
+                            "<div class='gradx_slectboxes'>\n"+
+                            "<select id='gradx_gradient_type' class='gradx_gradient_type'>\n"+
+                            "    <option value='linear'>Linear</option>\n"+
+                            "    <option value='circle'>Radial - Circle</option>\n"+
+                            "    <option value='ellipse'>Radial - Ellipse</option>\n"+
+                            "</select>\n\
+                            "<select id='gradx_gradient_subtype' class='gradx_gradient_type'>\n"+
+                            "    <option id='gradx_gradient_subtype_desc' value='gradient-direction' disabled>gradient direction</option>\n"+
+                            "    <option value='left' selected>Left</option>\n"+
+                            "    <option value='right'>Right</option>\n"+
+                            "    <option value='top'>Top</option>\n"+
+                            "    <option value='bottom'>Bottom</option>\n"+
+                            "</select>\n"+
+                            "<select id='gradx_gradient_subtype2' class='gradx_gradient_type gradx_hide'>\n"+
+                            "</select>\n"+
+                            "<select id='gradx_radial_gradient_size' class='gradx_gradient_type gradx_hide'>\n"+
+                            "</select>\n"+
+                            "</div>\n"+
+                            "<div class='gradx_container' id='gradx_" + id + "'>\n"+
+                            "    <div id='gradx_stop_sliders_" + id + "'></div>\n"+
+                            "    <div class='gradx_panel' id='gradx_panel_" + id + "'></div>\n"+
+                            "    <div class='gradx_start_sliders' id='gradx_start_sliders_" + id + "'>\n"+
+                            "        <div class='cp-default' id='gradx_slider_info'>\n"+
+                            "            <div id='gradx_slider_controls'>\n"+
+                            "                <div id='gradx_delete_slider' class='gradx_btn'><i class='icon icon-remove'></i>delete</div>\n"+
+                            "            </div>\n"+
+                            "            <div id='gradx_slider_content'></div>\n"+
+                            "        </div> \n"+
+                            "    </div>\n"+
+                            "</div>\n"+
+                            "<div id='gradx_show_code' class='gradx_show_code gradx_btn'><i class='icon icon-file-css'></i><span>show the code</span></div>\n"+
+                            "<div id='gradx_show_presets' style='display:none' class='gradx_show_presets gradx_btn'><i class='icon icon-preset'></i><span>show presets</span></div>\n"+
+                            "<textarea class='gradx_code' id='gradx_code'></textarea>\n"+
+                        "</div>";
 
                 this.me.html(html);
 
@@ -760,5 +759,5 @@ define([
 
     };
 
-    return skylark.attach("widgets.Gradienter",gradX);
+    return skylark.attach("domx.Gradienter",gradX);
 });
