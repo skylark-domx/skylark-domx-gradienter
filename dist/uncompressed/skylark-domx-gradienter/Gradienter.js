@@ -7,11 +7,10 @@ define([
     "skylark-domx-finder",
     "skylark-domx-query",
     "skylark-domx-plugins",    
-    "skylark-data-color/colors",
-    "skylark-data-color/Color",
+    "skylark-graphics-color/Color",
     "skylark-domx-colorpicker/ColorPicker",
     "./Drag"
-],function(skylark, langx, browser, noder, eventer,finder, $, plugins,colors, Color, ColorPicker,Drag) {
+],function(skylark, langx, browser, noder, eventer,finder, $, plugins,Color, ColorPicker,Drag) {
 
 
     /*

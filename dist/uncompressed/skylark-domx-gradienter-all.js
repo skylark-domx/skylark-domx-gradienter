@@ -685,7 +685,7 @@ define('skylark-langx-objects/objects',[
         return keys;
     }
 
-    function each(obj, callback) {
+    function each(obj, callback,isForEach) {
         var length, key, i, undef, value;
 
         if (obj) {
@@ -696,7 +696,7 @@ define('skylark-langx-objects/objects',[
                 for (key in obj) {
                     if (obj.hasOwnProperty(key)) {
                         value = obj[key];
-                        if (callback.call(value, key, value) === false) {
+                        if ((isForEach ? callback.call(value, value, key) : callback.call(value, key, value) ) === false) {
                             break;
                         }
                     }
@@ -705,7 +705,7 @@ define('skylark-langx-objects/objects',[
                 // Loop array items
                 for (i = 0; i < length; i++) {
                     value = obj[i];
-                    if (callback.call(value, i, value) === false) {
+                    if ((isForEach ? callback.call(value, value, i) : callback.call(value, i, value) )=== false) {
                         break;
                     }
                 }
@@ -824,13 +824,15 @@ define('skylark-langx-objects/objects',[
             if (safe && target[key] !== undefined) {
                 continue;
             }
-            if (deep && (isPlainObject(source[key]) || isArray(source[key]))) {
-                if (isPlainObject(source[key]) && !isPlainObject(target[key])) {
+            // if (deep && (isPlainObject(source[key]) || isArray(source[key]))) {
+            //    if (isPlainObject(source[key]) && !isPlainObject(target[key])) {
+            if (deep && isPlainObject(source[key])) {
+                if (!isPlainObject(target[key])) {
                     target[key] = {};
                 }
-                if (isArray(source[key]) && !isArray(target[key])) {
-                    target[key] = [];
-                }
+                //if (isArray(source[key]) && !isArray(target[key])) {
+                //    target[key] = [];
+                //}
                 _mixin(target[key], source[key], deep, safe);
             } else if (source[key] !== undefined) {
                 target[key] = source[key]
@@ -2670,154 +2672,111 @@ define('skylark-langx/Deferred',[
 ],function(Deferred){
     return Deferred;
 });
-define('skylark-langx-emitter/Emitter',[
-  "skylark-langx-ns/ns",
+define('skylark-langx-events/events',[
+	"skylark-langx-ns"
+],function(skylark){
+	return skylark.attach("langx.events",{});
+});
+define('skylark-langx-events/Event',[
+  "skylark-langx-objects",
+  "skylark-langx-funcs",
+  "skylark-langx-klass",
+],function(objects,funcs,klass){
+    var eventMethods = {
+        preventDefault: "isDefaultPrevented",
+        stopImmediatePropagation: "isImmediatePropagationStopped",
+        stopPropagation: "isPropagationStopped"
+     };
+        
+
+    function compatible(event, source) {
+        if (source || !event.isDefaultPrevented) {
+            if (!source) {
+                source = event;
+            }
+
+            objects.each(eventMethods, function(name, predicate) {
+                var sourceMethod = source[name];
+                event[name] = function() {
+                    this[predicate] = funcs.returnTrue;
+                    return sourceMethod && sourceMethod.apply(source, arguments);
+                }
+                event[predicate] = funcs.returnFalse;
+            });
+        }
+        return event;
+    }
+
+
+    /*
+    var Event = klass({
+        _construct : function(type,props) {
+            CustomEvent.call(this,type.props);
+            objects.safeMixin(this, props);
+            compatible(this);
+        }
+    },CustomEvent);
+    */
+
+    class Event extends CustomEvent {
+        constructor(type,props) {
+            super(type,props);
+            objects.safeMixin(this, props);
+            compatible(this);
+        } 
+    }
+
+
+    Event.compatible = compatible;
+
+    return Event;
+    
+});
+define('skylark-langx-events/Listener',[
   "skylark-langx-types",
   "skylark-langx-objects",
   "skylark-langx-arrays",
-  "skylark-langx-klass"
-],function(skylark,types,objects,arrays,klass){
+  "skylark-langx-klass",
+  "./events",
+  "./Event"
+],function(types,objects,arrays,klass,events,Event){
     var slice = Array.prototype.slice,
         compact = arrays.compact,
         isDefined = types.isDefined,
         isPlainObject = types.isPlainObject,
         isFunction = types.isFunction,
+        isBoolean = types.isBoolean,
         isString = types.isString,
         isEmptyObject = types.isEmptyObject,
         mixin = objects.mixin,
         safeMixin = objects.safeMixin;
 
-    function parse(event) {
-        var segs = ("" + event).split(".");
-        return {
-            name: segs[0],
-            ns: segs.slice(1).join(" ")
-        };
-    }
 
-    var Emitter = klass({
-        on: function(events, selector, data, callback, ctx, /*used internally*/ one) {
-            var self = this,
-                _hub = this._hub || (this._hub = {});
-
-            if (isPlainObject(events)) {
-                ctx = callback;
-                each(events, function(type, fn) {
-                    self.on(type, selector, data, fn, ctx, one);
-                });
-                return this;
-            }
-
-            if (!isString(selector) && !isFunction(callback)) {
-                ctx = callback;
-                callback = data;
-                data = selector;
-                selector = undefined;
-            }
-
-            if (isFunction(data)) {
-                ctx = callback;
-                callback = data;
-                data = null;
-            }
-
-            if (isString(events)) {
-                events = events.split(/\s/)
-            }
-
-            events.forEach(function(event) {
-                var parsed = parse(event),
-                    name = parsed.name,
-                    ns = parsed.ns;
-
-                (_hub[name] || (_hub[name] = [])).push({
-                    fn: callback,
-                    selector: selector,
-                    data: data,
-                    ctx: ctx,
-                    ns : ns,
-                    one: one
-                });
-            });
-
-            return this;
-        },
-
-        one: function(events, selector, data, callback, ctx) {
-            return this.on(events, selector, data, callback, ctx, 1);
-        },
-
-        emit: function(e /*,argument list*/ ) {
-            if (!this._hub) {
-                return this;
-            }
-
-            var self = this;
-
-            if (isString(e)) {
-                e = new CustomEvent(e);
-            }
-
-            Object.defineProperty(e,"target",{
-                value : this
-            });
-
-            var args = slice.call(arguments, 1);
-            if (isDefined(args)) {
-                args = [e].concat(args);
-            } else {
-                args = [e];
-            }
-            [e.type || e.name, "all"].forEach(function(eventName) {
-                var parsed = parse(eventName),
-                    name = parsed.name,
-                    ns = parsed.ns;
-
-                var listeners = self._hub[name];
-                if (!listeners) {
-                    return;
-                }
-
-                var len = listeners.length,
-                    reCompact = false;
-
-                for (var i = 0; i < len; i++) {
-                    var listener = listeners[i];
-                    if (ns && (!listener.ns ||  !listener.ns.startsWith(ns))) {
-                        continue;
-                    }
-                    if (e.data) {
-                        if (listener.data) {
-                            e.data = mixin({}, listener.data, e.data);
-                        }
-                    } else {
-                        e.data = listener.data || null;
-                    }
-                    listener.fn.apply(listener.ctx, args);
-                    if (listener.one) {
-                        listeners[i] = null;
-                        reCompact = true;
-                    }
-                }
-
-                if (reCompact) {
-                    self._hub[eventName] = compact(listeners);
-                }
-
-            });
-            return this;
-        },
-
-        listened: function(event) {
-            var evtArr = ((this._hub || (this._events = {}))[event] || []);
-            return evtArr.length > 0;
-        },
+    var Listener = klass({
 
         listenTo: function(obj, event, callback, /*used internally*/ one) {
             if (!obj) {
                 return this;
             }
 
+            if (isBoolean(callback)) {
+                one = callback;
+                callback = null;
+            }
+
+            if (types.isPlainObject(event)){
+                //listenTo(obj,callbacks,one)
+                var callbacks = event;
+                for (var name in callbacks) {
+                    this.listeningTo(obj,name,callbacks[name],one);
+                }
+                return this;
+            }
+
+            if (!callback) {
+                callback = "handleEvent";
+            }
+            
             // Bind callbacks on obj,
             if (isString(callback)) {
                 callback = this[callback];
@@ -2858,6 +2817,217 @@ define('skylark-langx-emitter/Emitter',[
 
         listenToOnce: function(obj, event, callback) {
             return this.listenTo(obj, event, callback, 1);
+        },
+
+        unlistenTo: function(obj, event, callback) {
+            var listeningTo = this._listeningTo;
+            if (!listeningTo) {
+                return this;
+            }
+
+            if (isString(callback)) {
+                callback = this[callback];
+            }
+
+            for (var i = 0; i < listeningTo.length; i++) {
+                var listening = listeningTo[i];
+
+                if (obj && obj != listening.obj) {
+                    continue;
+                }
+
+                var listeningEvents = listening.events;
+                for (var eventName in listeningEvents) {
+                    if (event && event != eventName) {
+                        continue;
+                    }
+
+                    var listeningEvent = listeningEvents[eventName];
+
+                    for (var j = 0; j < listeningEvent.length; j++) {
+                        if (!callback || callback == listeningEvent[i]) {
+                            listening.obj.off(eventName, listeningEvent[i], this);
+                            listeningEvent[i] = null;
+                        }
+                    }
+
+                    listeningEvent = listeningEvents[eventName] = compact(listeningEvent);
+
+                    if (isEmptyObject(listeningEvent)) {
+                        listeningEvents[eventName] = null;
+                    }
+
+                }
+
+                if (isEmptyObject(listeningEvents)) {
+                    listeningTo[i] = null;
+                }
+            }
+
+            listeningTo = this._listeningTo = compact(listeningTo);
+            if (isEmptyObject(listeningTo)) {
+                this._listeningTo = null;
+            }
+
+            return this;
+        }
+    });
+
+    return events.Listener = Listener;
+
+});
+define('skylark-langx-events/Emitter',[
+  "skylark-langx-types",
+  "skylark-langx-objects",
+  "skylark-langx-arrays",
+  "skylark-langx-klass",
+  "./events",
+  "./Event",
+  "./Listener"
+],function(types,objects,arrays,klass,events,Event,Listener){
+    var slice = Array.prototype.slice,
+        compact = arrays.compact,
+        isDefined = types.isDefined,
+        isPlainObject = types.isPlainObject,
+        isFunction = types.isFunction,
+        isString = types.isString,
+        isEmptyObject = types.isEmptyObject,
+        mixin = objects.mixin,
+        safeMixin = objects.safeMixin;
+
+    function parse(event) {
+        var segs = ("" + event).split(".");
+        return {
+            name: segs[0],
+            ns: segs.slice(1).join(" ")
+        };
+    }
+
+    var Emitter = Listener.inherit({
+        on: function(events, selector, data, callback, ctx, /*used internally*/ one) {
+            var self = this,
+                _hub = this._hub || (this._hub = {});
+
+            if (isPlainObject(events)) {
+                ctx = callback;
+                each(events, function(type, fn) {
+                    self.on(type, selector, data, fn, ctx, one);
+                });
+                return this;
+            }
+
+            if (!isString(selector) && !isFunction(callback)) {
+                ctx = callback;
+                callback = data;
+                data = selector;
+                selector = undefined;
+            }
+
+            if (isFunction(data)) {
+                ctx = callback;
+                callback = data;
+                data = null;
+            }
+
+            if (!callback ) {
+                throw new Error("No callback function");
+            } else if (!isFunction(callback)) {
+                throw new Error("The callback  is not afunction");
+            }
+
+            if (isString(events)) {
+                events = events.split(/\s/)
+            }
+
+            events.forEach(function(event) {
+                var parsed = parse(event),
+                    name = parsed.name,
+                    ns = parsed.ns;
+
+                (_hub[name] || (_hub[name] = [])).push({
+                    fn: callback,
+                    selector: selector,
+                    data: data,
+                    ctx: ctx,
+                    ns : ns,
+                    one: one
+                });
+            });
+
+            return this;
+        },
+
+        one: function(events, selector, data, callback, ctx) {
+            return this.on(events, selector, data, callback, ctx, 1);
+        },
+
+        emit: function(e /*,argument list*/ ) {
+            if (!this._hub) {
+                return this;
+            }
+
+            var self = this;
+
+            if (isString(e)) {
+                e = new Event(e); //new CustomEvent(e);
+            }
+
+            Object.defineProperty(e,"target",{
+                value : this
+            });
+
+            var args = slice.call(arguments, 1);
+            if (isDefined(args)) {
+                args = [e].concat(args);
+            } else {
+                args = [e];
+            }
+            [e.type || e.name, "all"].forEach(function(eventName) {
+                var parsed = parse(eventName),
+                    name = parsed.name,
+                    ns = parsed.ns;
+
+                var listeners = self._hub[name];
+                if (!listeners) {
+                    return;
+                }
+
+                var len = listeners.length,
+                    reCompact = false;
+
+                for (var i = 0; i < len; i++) {
+                    if (e.isImmediatePropagationStopped && e.isImmediatePropagationStopped()) {
+                        return this;
+                    }
+                    var listener = listeners[i];
+                    if (ns && (!listener.ns ||  !listener.ns.startsWith(ns))) {
+                        continue;
+                    }
+                    if (e.data) {
+                        if (listener.data) {
+                            e.data = mixin({}, listener.data, e.data);
+                        }
+                    } else {
+                        e.data = listener.data || null;
+                    }
+                    listener.fn.apply(listener.ctx, args);
+                    if (listener.one) {
+                        listeners[i] = null;
+                        reCompact = true;
+                    }
+                }
+
+                if (reCompact) {
+                    self._hub[eventName] = compact(listeners);
+                }
+
+            });
+            return this;
+        },
+
+        listened: function(event) {
+            var evtArr = ((this._hub || (this._events = {}))[event] || []);
+            return evtArr.length > 0;
         },
 
         off: function(events, callback) {
@@ -2902,90 +3072,52 @@ define('skylark-langx-emitter/Emitter',[
 
             return this;
         },
-        unlistenTo: function(obj, event, callback) {
-            var listeningTo = this._listeningTo;
-            if (!listeningTo) {
-                return this;
-            }
-            for (var i = 0; i < listeningTo.length; i++) {
-                var listening = listeningTo[i];
-
-                if (obj && obj != listening.obj) {
-                    continue;
-                }
-
-                var listeningEvents = listening.events;
-                for (var eventName in listeningEvents) {
-                    if (event && event != eventName) {
-                        continue;
-                    }
-
-                    var listeningEvent = listeningEvents[eventName];
-
-                    for (var j = 0; j < listeningEvent.length; j++) {
-                        if (!callback || callback == listeningEvent[i]) {
-                            listening.obj.off(eventName, listeningEvent[i], this);
-                            listeningEvent[i] = null;
-                        }
-                    }
-
-                    listeningEvent = listeningEvents[eventName] = compact(listeningEvent);
-
-                    if (isEmptyObject(listeningEvent)) {
-                        listeningEvents[eventName] = null;
-                    }
-
-                }
-
-                if (isEmptyObject(listeningEvents)) {
-                    listeningTo[i] = null;
-                }
-            }
-
-            listeningTo = this._listeningTo = compact(listeningTo);
-            if (isEmptyObject(listeningTo)) {
-                this._listeningTo = null;
-            }
-
-            return this;
-        },
-
         trigger  : function() {
             return this.emit.apply(this,arguments);
         }
     });
 
-    Emitter.createEvent = function (type,props) {
-        var e = new CustomEvent(type,props);
-        return safeMixin(e, props);
-    };
 
-    return skylark.attach("langx.Emitter",Emitter);
+    return events.Emitter = Emitter;
 
 });
-define('skylark-langx-emitter/Evented',[
-  "skylark-langx-ns/ns",
-	"./Emitter"
-],function(skylark,Emitter){
-	return skylark.attach("langx.Evented",Emitter);
-});
-define('skylark-langx-emitter/main',[
-	"./Emitter",
-	"./Evented"
-],function(Emitter){
-	return Emitter;
-});
-define('skylark-langx-emitter', ['skylark-langx-emitter/main'], function (main) { return main; });
-
 define('skylark-langx/Emitter',[
-    "skylark-langx-emitter"
-],function(Evented){
-    return Evented;
+    "skylark-langx-events/Emitter"
+],function(Emitter){
+    return Emitter;
 });
 define('skylark-langx/Evented',[
-    "skylark-langx-emitter"
-],function(Evented){
-    return Evented;
+    "./Emitter"
+],function(Emitter){
+    return Emitter;
+});
+define('skylark-langx-events/createEvent',[
+	"./events",
+	"./Event"
+],function(events,Event){
+    function createEvent(type,props) {
+        //var e = new CustomEvent(type,props);
+        //return safeMixin(e, props);
+        return new Event(type,props);
+    };
+
+    return events.createEvent = createEvent;	
+});
+define('skylark-langx-events/main',[
+	"./events",
+	"./Event",
+	"./Listener",
+	"./Emitter",
+	"./createEvent"
+],function(events){
+	return events;
+});
+define('skylark-langx-events', ['skylark-langx-events/main'], function (main) { return main; });
+
+define('skylark-langx/events',[
+	"skylark-langx-events"
+],function(events){
+	return events;
 });
 define('skylark-langx/funcs',[
     "skylark-langx-funcs"
@@ -3084,6 +3216,209 @@ define('skylark-langx/hoster',[
 	"skylark-langx-hoster"
 ],function(hoster){
 	return hoster;
+});
+define('skylark-langx-maths/maths',[
+    "skylark-langx-ns",
+    "skylark-langx-types"
+],function(skylark,types){
+
+
+	var _lut = [];
+
+	for ( var i = 0; i < 256; i ++ ) {
+
+		_lut[ i ] = ( i < 16 ? '0' : '' ) + ( i ).toString( 16 );
+
+	}
+
+	var maths = {
+
+		DEG2RAD: Math.PI / 180,
+		RAD2DEG: 180 / Math.PI,
+
+
+
+		clamp: function ( value, min, max ) {
+
+			return Math.max( min, Math.min( max, value ) );
+
+		},
+
+		// compute euclidian modulo of m % n
+		// https://en.wikipedia.org/wiki/Modulo_operation
+
+		euclideanModulo: function ( n, m ) {
+
+			return ( ( n % m ) + m ) % m;
+
+		},
+
+		// Linear mapping from range <a1, a2> to range <b1, b2>
+
+		mapLinear: function ( x, a1, a2, b1, b2 ) {
+
+			return b1 + ( x - a1 ) * ( b2 - b1 ) / ( a2 - a1 );
+
+		},
+
+		// https://en.wikipedia.org/wiki/Linear_interpolation
+
+		lerp: function ( x, y, t ) {
+
+			return ( 1 - t ) * x + t * y;
+
+		},
+
+		// http://en.wikipedia.org/wiki/Smoothstep
+
+		smoothstep: function ( x, min, max ) {
+
+			if ( x <= min ) return 0;
+			if ( x >= max ) return 1;
+
+			x = ( x - min ) / ( max - min );
+
+			return x * x * ( 3 - 2 * x );
+
+		},
+
+		smootherstep: function ( x, min, max ) {
+
+			if ( x <= min ) return 0;
+			if ( x >= max ) return 1;
+
+			x = ( x - min ) / ( max - min );
+
+			return x * x * x * ( x * ( x * 6 - 15 ) + 10 );
+
+		},
+
+		// Random integer from <low, high> interval
+
+		randInt: function ( low, high ) {
+
+			return low + Math.floor( Math.random() * ( high - low + 1 ) );
+
+		},
+
+		// Random float from <low, high> interval
+
+		randFloat: function ( low, high ) {
+
+			return low + Math.random() * ( high - low );
+
+		},
+
+		// Random float from <-range/2, range/2> interval
+
+		randFloatSpread: function ( range ) {
+
+			return range * ( 0.5 - Math.random() );
+
+		},
+
+		degToRad: function ( degrees ) {
+
+			return degrees * MathUtils.DEG2RAD;
+
+		},
+
+		radToDeg: function ( radians ) {
+
+			return radians * MathUtils.RAD2DEG;
+
+		},
+
+		isPowerOfTwo: function ( value ) {
+
+			return ( value & ( value - 1 ) ) === 0 && value !== 0;
+
+		},
+
+		ceilPowerOfTwo: function ( value ) {
+
+			return Math.pow( 2, Math.ceil( Math.log( value ) / Math.LN2 ) );
+
+		},
+
+		floorPowerOfTwo: function ( value ) {
+
+			return Math.pow( 2, Math.floor( Math.log( value ) / Math.LN2 ) );
+
+		},
+
+		setQuaternionFromProperEuler: function ( q, a, b, c, order ) {
+
+			// Intrinsic Proper Euler Angles - see https://en.wikipedia.org/wiki/Euler_angles
+
+			// rotations are applied to the axes in the order specified by 'order'
+			// rotation by angle 'a' is applied first, then by angle 'b', then by angle 'c'
+			// angles are in radians
+
+			var cos = Math.cos;
+			var sin = Math.sin;
+
+			var c2 = cos( b / 2 );
+			var s2 = sin( b / 2 );
+
+			var c13 = cos( ( a + c ) / 2 );
+			var s13 = sin( ( a + c ) / 2 );
+
+			var c1_3 = cos( ( a - c ) / 2 );
+			var s1_3 = sin( ( a - c ) / 2 );
+
+			var c3_1 = cos( ( c - a ) / 2 );
+			var s3_1 = sin( ( c - a ) / 2 );
+
+			if ( order === 'XYX' ) {
+
+				q.set( c2 * s13, s2 * c1_3, s2 * s1_3, c2 * c13 );
+
+			} else if ( order === 'YZY' ) {
+
+				q.set( s2 * s1_3, c2 * s13, s2 * c1_3, c2 * c13 );
+
+			} else if ( order === 'ZXZ' ) {
+
+				q.set( s2 * c1_3, s2 * s1_3, c2 * s13, c2 * c13 );
+
+			} else if ( order === 'XZX' ) {
+
+				q.set( c2 * s13, s2 * s3_1, s2 * c3_1, c2 * c13 );
+
+			} else if ( order === 'YXY' ) {
+
+				q.set( s2 * c3_1, c2 * s13, s2 * s3_1, c2 * c13 );
+
+			} else if ( order === 'ZYZ' ) {
+
+				q.set( s2 * s3_1, s2 * c3_1, c2 * s13, c2 * c13 );
+
+			} else {
+
+				console.warn( 'THREE.MathUtils: .setQuaternionFromProperEuler() encountered an unknown order.' );
+
+			}
+
+		}
+
+	};
+
+
+
+	return  skylark.attach("langx.maths",maths);
+});
+define('skylark-langx-maths/main',[
+	"./maths"
+],function(maths){
+	return maths;
+});
+define('skylark-langx-maths', ['skylark-langx-maths/main'], function (main) { return main; });
+
+define('skylark-langx/maths',[
+    "skylark-langx-maths"
+],function(maths){
+    return maths;
 });
 define('skylark-langx/numbers',[
 	"skylark-langx-numbers"
@@ -3289,8 +3624,13 @@ define('skylark-langx-strings/strings',[
         return document.getElementById(id).innerHTML;
     };
 
+
+    function ltrim(str) {
+        return str.replace(/^\s+/, '');
+    }
+    
     function rtrim(str) {
-        return str.replace(/\s+$/g, '');
+        return str.replace(/\s+$/, '');
     }
 
     // Slugify a string
@@ -3356,6 +3696,8 @@ define('skylark-langx-strings/strings',[
         escapeHTML : escapeHTML,
 
         generateUUID : generateUUID,
+
+        ltrim : ltrim,
 
         lowerFirst: function(str) {
             return str.charAt(0).toLowerCase() + str.slice(1);
@@ -3759,6 +4101,16 @@ define('skylark-langx/Stateful',[
 
 	return Stateful;
 });
+define('skylark-langx-emitter/Emitter',[
+    "skylark-langx-events/Emitter"
+],function(Emitter){
+    return Emitter;
+});
+define('skylark-langx-emitter/Evented',[
+	"./Emitter"
+],function(Emitter){
+	return Emitter;
+});
 define('skylark-langx-topic/topic',[
 	"skylark-langx-ns",
 	"skylark-langx-emitter/Evented"
@@ -3817,16 +4169,39 @@ define('skylark-langx/langx',[
     "./Deferred",
     "./Emitter",
     "./Evented",
+    "./events",
     "./funcs",
     "./hoster",
     "./klass",
+    "./maths",
     "./numbers",
     "./objects",
     "./Stateful",
     "./strings",
     "./topic",
     "./types"
-], function(skylark,arrays,ArrayStore,aspect,async,datetimes,Deferred,Emitter,Evented,funcs,hoster,klass,numbers,objects,Stateful,strings,topic,types) {
+], function(
+    skylark,
+    arrays,
+    ArrayStore,
+    aspect,
+    async,
+    datetimes,
+    Deferred,
+    Emitter,
+    Evented,
+    events,
+    funcs,
+    hoster,
+    klass,
+    maths,
+    numbers,
+    objects,
+    Stateful,
+    strings,
+    topic,
+    types
+) {
     "use strict";
     var toString = {}.toString,
         concat = Array.prototype.concat,
@@ -8425,12 +8800,12 @@ define('skylark-domx-styler/styler',[
         var self = this;
         name.split(/\s+/g).forEach(function(klass) {
             if (when === undefined) {
-                when = !self.hasClass(elm, klass);
+                when = !hasClass(elm, klass);
             }
             if (when) {
-                self.addClass(elm, klass);
+                addClass(elm, klass);
             } else {
-                self.removeClass(elm, klass)
+                removeClass(elm, klass)
             }
         });
 
@@ -10415,8 +10790,11 @@ define('skylark-domx-fx/main',[
 define('skylark-domx-fx', ['skylark-domx-fx/main'], function (main) { return main; });
 
 define('skylark-domx-plugins/plugins',[
-    "skylark-langx/skylark",
-    "skylark-langx/langx",
+    "skylark-langx-ns",
+    "skylark-langx-types",
+    "skylark-langx-objects",
+    "skylark-langx-funcs",
+    "skylark-langx-events/Emitter",
     "skylark-domx-noder",
     "skylark-domx-data",
     "skylark-domx-eventer",
@@ -10426,7 +10804,22 @@ define('skylark-domx-plugins/plugins',[
     "skylark-domx-fx",
     "skylark-domx-query",
     "skylark-domx-velm"
-], function(skylark, langx, noder, datax, eventer, finder, geom, styler, fx, $, elmx) {
+], function(
+    skylark,
+    types,
+    objects,
+    funcs,
+    Emitter, 
+    noder, 
+    datax, 
+    eventer, 
+    finder, 
+    geom, 
+    styler, 
+    fx, 
+    $, 
+    elmx
+) {
     "use strict";
 
     var slice = Array.prototype.slice,
@@ -10505,10 +10898,12 @@ define('skylark-domx-plugins/plugins',[
                                 "attempted to call method '" + methodName + "'" );
                         }
 
-                        if ( !langx.isFunction( plugin[ methodName ] ) || methodName.charAt( 0 ) === "_" ) {
+                        if ( !types.isFunction( plugin[ methodName ] ) || methodName.charAt( 0 ) === "_" ) {
                             throw new Error( "no such method '" + methodName + "' for " + pluginName +
                                 " plugin instance" );
                         }
+
+                        args = slice.call(args,1); //remove method name
 
                         var ret = plugin[methodName].apply(plugin,args);
                         if (ret == plugin) {
@@ -10533,7 +10928,7 @@ define('skylark-domx-plugins/plugins',[
         pluginKlasses[pluginName] = pluginKlass;
 
         if (shortcutName) {
-            if (instanceDataName && langx.isFunction(instanceDataName)) {
+            if (instanceDataName && types.isFunction(instanceDataName)) {
                 extfn = instanceDataName;
                 instanceDataName = null;
             } 
@@ -10575,7 +10970,7 @@ define('skylark-domx-plugins/plugins',[
     }
 
  
-    var Plugin =   langx.Evented.inherit({
+    var Plugin =   Emitter.inherit({
         klassName: "Plugin",
 
         _construct : function(elm,options) {
@@ -10601,15 +10996,15 @@ define('skylark-domx-plugins/plugins',[
             for (var i=0;i<ctors.length;i++) {
               ctor = ctors[i];
               if (ctor.prototype.hasOwnProperty("options")) {
-                langx.mixin(defaults,ctor.prototype.options,true);
+                objects.mixin(defaults,ctor.prototype.options,true);
               }
               if (ctor.hasOwnProperty("options")) {
-                langx.mixin(defaults,ctor.options,true);
+                objects.mixin(defaults,ctor.options,true);
               }
             }
           }
           Object.defineProperty(this,"options",{
-            value :langx.mixin({},defaults,options,true)
+            value :objects.mixin({},defaults,options,true)
           });
 
           //return this.options = langx.mixin({},defaults,options);
@@ -10618,15 +11013,16 @@ define('skylark-domx-plugins/plugins',[
 
 
         destroy: function() {
-            var that = this;
 
             this._destroy();
-            // We can probably remove the unbind calls in 2.0
-            // all event bindings should go through this._on()
+
+            // remove all event lisener
+            this.unlistenTo();
+            // remove data 
             datax.removeData(this._elm,this.pluginName );
         },
 
-        _destroy: langx.noop,
+        _destroy: funcs.noop,
 
         _delay: function( handler, delay ) {
             function handlerProxy() {
@@ -10635,6 +11031,17 @@ define('skylark-domx-plugins/plugins',[
             }
             var instance = this;
             return setTimeout( handlerProxy, delay || 0 );
+        },
+
+        elmx : function(elm) {
+            elm = elm || this._elm;
+            return elmx(elm);
+
+        },
+
+        $ : function(elm) {
+            elm = elm || this._elm;
+            return $(elm);
         },
 
         option: function( key, value ) {
@@ -10646,7 +11053,7 @@ define('skylark-domx-plugins/plugins',[
             if ( arguments.length === 0 ) {
 
                 // Don't return a reference to the internal hash
-                return langx.mixin( {}, this.options );
+                return objects.mixin( {}, this.options );
             }
 
             if ( typeof key === "string" ) {
@@ -10656,7 +11063,7 @@ define('skylark-domx-plugins/plugins',[
                 parts = key.split( "." );
                 key = parts.shift();
                 if ( parts.length ) {
-                    curOption = options[ key ] = langx.mixin( {}, this.options[ key ] );
+                    curOption = options[ key ] = objects.mixin( {}, this.options[ key ] );
                     for ( i = 0; i < parts.length - 1; i++ ) {
                         curOption[ parts[ i ] ] = curOption[ parts[ i ] ] || {};
                         curOption = curOption[ parts[ i ] ];
@@ -10709,6 +11116,10 @@ define('skylark-domx-plugins/plugins',[
 
     });
 
+    Plugin.instantiate = function(elm,options) {
+        return instantiate(elm,this.prototype.pluginName,options);
+    };
+    
     $.fn.plugin = function(name,options) {
         var args = slice.call( arguments, 1 ),
             self = this,
@@ -10722,7 +11133,7 @@ define('skylark-domx-plugins/plugins',[
 
     elmx.partial("plugin",function(name,options) {
         var args = slice.call( arguments, 1 );
-        return instantiate.apply(this,[this.domNode,name].concat(args));
+        return instantiate.apply(this,[this._elm,name].concat(args));
     }); 
 
 
@@ -10730,7 +11141,7 @@ define('skylark-domx-plugins/plugins',[
         return plugins;
     }
      
-    langx.mixin(plugins, {
+    objects.mixin(plugins, {
         instantiate,
         Plugin,
         register,
@@ -10746,32 +11157,12 @@ define('skylark-domx-plugins/main',[
 });
 define('skylark-domx-plugins', ['skylark-domx-plugins/main'], function (main) { return main; });
 
-define('skylark-data-color/colors',[
-    "skylark-langx/skylark",
-    "skylark-langx/langx"
-],function(skylark,langx) {
-    /*
-     * This module uses the following open source code:
-     *   TinyColor v1.1.2
-     *     https://github.com/bgrins/TinyColor
-     *     Brian Grinstead, MIT License
-     */
-
-    var colors = skylark.colors =  skylark.colors || {};
-
-    var trimLeft = /^[\s,#]+/,
-        trimRight = /\s+$/,
-        math = Math,
-        mathRound = math.round,
-        mathMin = math.min,
-        mathMax = math.max,
-        mathRandom = math.random;
-
-
+ define('skylark-graphics-color/_names',[
+],function() {
      // Big List of Colors
     // ------------------
     // <http://www.w3.org/TR/css3-color/#svg-color>
-    var names = colors.names = {
+    return  {
         aliceblue: "f0f8ff",
         antiquewhite: "faebd7",
         aqua: "0ff",
@@ -10923,10 +11314,13 @@ define('skylark-data-color/colors',[
         yellowgreen: "9acd32"
     };
 
-    // Make it easy to access colors via `hexNames[hex]`
-    var hexNames = colors.hexNames = flip(names);
+
+});
 
 
+ define('skylark-graphics-color/_hexNames',[
+    "./_names"
+],function(names) {
     // Utilities
     // ---------
 
@@ -10940,71 +11334,56 @@ define('skylark-data-color/colors',[
         }
         return flipped;
     }
-       
+    return  flip(names);
+
+});
 
 
-    // Given a string or object, convert that input to RGB
-    // Possible string inputs:
-    //
-    //     "red"
-    //     "#f00" or "f00"
-    //     "#ff0000" or "ff0000"
-    //     "#ff000000" or "ff000000"
-    //     "rgb 255 0 0" or "rgb (255, 0, 0)"
-    //     "rgb 1.0 0 0" or "rgb (1, 0, 0)"
-    //     "rgba (255, 0, 0, 1)" or "rgba 255, 0, 0, 1"
-    //     "rgba (1.0, 0, 0, 1)" or "rgba 1.0, 0, 0, 1"
-    //     "hsl(0, 100%, 50%)" or "hsl 0 100% 50%"
-    //     "hsla(0, 100%, 50%, 1)" or "hsla 0 100% 50%, 1"
-    //     "hsv(0, 100%, 100%)" or "hsv 0 100% 100%"
-    //
-    function inputToRGB(color) {
+define('skylark-graphics-color/_conversion',[
+],function(
+){
+    var math = Math,
+        mathRound = math.round,
+        mathMin = math.min,
+        mathMax = math.max,
+        mathRandom = math.random;
+            
+    // Force a hex value to have 2 characters
+    function pad2(c) {
+        return c.length == 1 ? '0' + c : '' + c;
+    }
 
-        var rgb = { r: 0, g: 0, b: 0 };
-        var a = 1;
-        var ok = false;
-        var format = false;
+    // Take input from [0, n] and return it as [0, 1]
+    function bound01(n, max) {
+        if (isOnePointZero(n)) { n = "100%"; }
 
-        if (typeof color == "string") {
-            color = stringInputToObject(color);
+        var processPercent = isPercentage(n);
+        n = mathMin(max, mathMax(0, parseFloat(n)));
+
+        // Automatically convert percentage into number
+        if (processPercent) {
+            n = parseInt(n * max, 10) / 100;
         }
 
-        if (typeof color == "object") {
-            if (color.hasOwnProperty("r") && color.hasOwnProperty("g") && color.hasOwnProperty("b")) {
-                rgb = rgbToRgb(color.r, color.g, color.b);
-                ok = true;
-                format = String(color.r).substr(-1) === "%" ? "prgb" : "rgb";
-            }
-            else if (color.hasOwnProperty("h") && color.hasOwnProperty("s") && color.hasOwnProperty("v")) {
-                color.s = convertToPercentage(color.s);
-                color.v = convertToPercentage(color.v);
-                rgb = hsvToRgb(color.h, color.s, color.v);
-                ok = true;
-                format = "hsv";
-            }
-            else if (color.hasOwnProperty("h") && color.hasOwnProperty("s") && color.hasOwnProperty("l")) {
-                color.s = convertToPercentage(color.s);
-                color.l = convertToPercentage(color.l);
-                rgb = hslToRgb(color.h, color.s, color.l);
-                ok = true;
-                format = "hsl";
-            }
-
-            if (color.hasOwnProperty("a")) {
-                a = color.a;
-            }
+        // Handle floating point rounding errors
+        if ((math.abs(n - max) < 0.000001)) {
+            return 1;
         }
 
-        a = boundAlpha(a);
+        // Convert into [0, 1] range if it isn't already
+        return (n % max) / parseFloat(max);
+    }
 
-        return {
-            ok: ok,
-            format: color.format || format,
-            r: mathMin(255, mathMax(rgb.r, 0)),
-            g: mathMin(255, mathMax(rgb.g, 0)),
-            b: mathMin(255, mathMax(rgb.b, 0)),
-            a: a
-        };
+
+    // Need to handle 1.0 as 100%, since once it is a number, there is no difference between it and 1
+    // <http://stackoverflow.com/questions/7422072/javascript-how-to-detect-number-as-a-decimal-including-1-0>
+    function isOnePointZero(n) {
+        return typeof n == "string" && n.indexOf('.') != -1 && parseFloat(n) === 1;
+    }
+
+    // Check to see if string passed in is a percentage
+    function isPercentage(n) {
+        return typeof n === "string" && n.indexOf('%') != -1;
     }
 
 
@@ -11181,7 +11560,47 @@ define('skylark-data-color/colors',[
         return hex.join("");
     }
 
+	function hexToRgb(hex) {
+	  var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+	  return result ? {
+	    r: parseInt(result[1], 16),
+	    g: parseInt(result[2], 16),
+	    b: parseInt(result[3], 16)
+	  } : null;
+	}
 
+	return  {
+		bound01,
+        rgbToRgb,
+		rgbToHsl,
+		hslToRgb,
+		rgbToHsv,
+		hsvToRgb,
+		rgbToHex,
+		rgbaToHex,
+		hexToRgb
+	};
+});
+define('skylark-graphics-color/Color',[
+    "skylark-langx-ns",
+    "skylark-langx-types",
+    "skylark-langx-klass",
+    "./_names",
+    "./_hexNames",
+    "./_conversion"
+],function(
+    skylark,
+    types,
+    klass,
+    names,
+    hexNames,
+    conversion
+) {
+    var math = Math,
+        mathRound = math.round,
+        mathMin = math.min,
+        mathMax = math.max,
+        mathRandom = math.random;
 
     // Return a valid alpha value [0,1] with all invalid values being set to 1
     function boundAlpha(a) {
@@ -11194,247 +11613,26 @@ define('skylark-data-color/colors',[
         return a;
     }
 
-    // Take input from [0, n] and return it as [0, 1]
-    function bound01(n, max) {
-        if (isOnePointZero(n)) { n = "100%"; }
-
-        var processPercent = isPercentage(n);
-        n = mathMin(max, mathMax(0, parseFloat(n)));
-
-        // Automatically convert percentage into number
-        if (processPercent) {
-            n = parseInt(n * max, 10) / 100;
-        }
-
-        // Handle floating point rounding errors
-        if ((math.abs(n - max) < 0.000001)) {
-            return 1;
-        }
-
-        // Convert into [0, 1] range if it isn't already
-        return (n % max) / parseFloat(max);
-    }
-
-    // Force a number between 0 and 1
+     // Force a number between 0 and 1
     function clamp01(val) {
         return mathMin(1, mathMax(0, val));
     }
-
-    // Parse a base-16 hex value into a base-10 integer
-    function parseIntFromHex(val) {
-        return parseInt(val, 16);
-    }
-
-    // Need to handle 1.0 as 100%, since once it is a number, there is no difference between it and 1
-    // <http://stackoverflow.com/questions/7422072/javascript-how-to-detect-number-as-a-decimal-including-1-0>
-    function isOnePointZero(n) {
-        return typeof n == "string" && n.indexOf('.') != -1 && parseFloat(n) === 1;
-    }
-
-    // Check to see if string passed in is a percentage
-    function isPercentage(n) {
-        return typeof n === "string" && n.indexOf('%') != -1;
-    }
-
-    // Force a hex value to have 2 characters
-    function pad2(c) {
-        return c.length == 1 ? '0' + c : '' + c;
-    }
-
-    // Replace a decimal with it's percentage value
-    function convertToPercentage(n) {
-        if (n <= 1) {
-            n = (n * 100) + "%";
-        }
-
-        return n;
-    }
-
-    // Converts a decimal to a hex value
-    function convertDecimalToHex(d) {
-        return Math.round(parseFloat(d) * 255).toString(16);
-    }
-    // Converts a hex value to a decimal
-    function convertHexToDecimal(h) {
-        return (parseIntFromHex(h) / 255);
-    }
-
-    var matchers = (function() {
-
-        // <http://www.w3.org/TR/css3-values/#integers>
-        var CSS_INTEGER = "[-\\+]?\\d+%?";
-
-        // <http://www.w3.org/TR/css3-values/#number-value>
-        var CSS_NUMBER = "[-\\+]?\\d*\\.\\d+%?";
-
-        // Allow positive/negative integer/number.  Don't capture the either/or, just the entire outcome.
-        var CSS_UNIT = "(?:" + CSS_NUMBER + ")|(?:" + CSS_INTEGER + ")";
-
-        // Actual matching.
-        // Parentheses and commas are optional, but not required.
-        // Whitespace can take the place of commas or opening paren
-        var PERMISSIVE_MATCH3 = "[\\s|\\(]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")\\s*\\)?";
-        var PERMISSIVE_MATCH4 = "[\\s|\\(]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")\\s*\\)?";
-
-        return {
-            rgb: new RegExp("rgb" + PERMISSIVE_MATCH3),
-            rgba: new RegExp("rgba" + PERMISSIVE_MATCH4),
-            hsl: new RegExp("hsl" + PERMISSIVE_MATCH3),
-            hsla: new RegExp("hsla" + PERMISSIVE_MATCH4),
-            hsv: new RegExp("hsv" + PERMISSIVE_MATCH3),
-            hsva: new RegExp("hsva" + PERMISSIVE_MATCH4),
-            hex3: /^([0-9a-fA-F]{1})([0-9a-fA-F]{1})([0-9a-fA-F]{1})$/,
-            hex6: /^([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/,
-            hex8: /^([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/
-        };
-    })();
-
-    // `stringInputToObject`
-    // Permissive string parsing.  Take in a number of formats, and output an object
-    // based on detected format.  Returns `{ r, g, b }` or `{ h, s, l }` or `{ h, s, v}`
-    function stringInputToObject(color) {
-
-        color = color.replace(trimLeft,'').replace(trimRight, '').toLowerCase();
-        var named = false;
-        if (names[color]) {
-            color = names[color];
-            named = true;
-        }
-        else if (color == 'transparent') {
-            return { r: 0, g: 0, b: 0, a: 0, format: "name" };
-        }
-
-        // Try to match string input using regular expressions.
-        // Keep most of the number bounding out of this function - don't worry about [0,1] or [0,100] or [0,360]
-        // Just return an object and let the conversion functions handle that.
-        // This way the result will be the same whether the tinycolor is initialized with string or object.
-        var match;
-        if ((match = matchers.rgb.exec(color))) {
-            return { r: match[1], g: match[2], b: match[3] };
-        }
-        if ((match = matchers.rgba.exec(color))) {
-            return { r: match[1], g: match[2], b: match[3], a: match[4] };
-        }
-        if ((match = matchers.hsl.exec(color))) {
-            return { h: match[1], s: match[2], l: match[3] };
-        }
-        if ((match = matchers.hsla.exec(color))) {
-            return { h: match[1], s: match[2], l: match[3], a: match[4] };
-        }
-        if ((match = matchers.hsv.exec(color))) {
-            return { h: match[1], s: match[2], v: match[3] };
-        }
-        if ((match = matchers.hsva.exec(color))) {
-            return { h: match[1], s: match[2], v: match[3], a: match[4] };
-        }
-        if ((match = matchers.hex8.exec(color))) {
-            return {
-                a: convertHexToDecimal(match[1]),
-                r: parseIntFromHex(match[2]),
-                g: parseIntFromHex(match[3]),
-                b: parseIntFromHex(match[4]),
-                format: named ? "name" : "hex8"
-            };
-        }
-        if ((match = matchers.hex6.exec(color))) {
-            return {
-                r: parseIntFromHex(match[1]),
-                g: parseIntFromHex(match[2]),
-                b: parseIntFromHex(match[3]),
-                format: named ? "name" : "hex"
-            };
-        }
-        if ((match = matchers.hex3.exec(color))) {
-            return {
-                r: parseIntFromHex(match[1] + '' + match[1]),
-                g: parseIntFromHex(match[2] + '' + match[2]),
-                b: parseIntFromHex(match[3] + '' + match[3]),
-                format: named ? "name" : "hex"
-            };
-        }
-
-        return false;
-    }
-
-    langx.mixin(colors,{
-        inputToRGB : inputToRGB,
-        rgbToRgb : rgbToRgb,
-        rgbToHsl : rgbToHsl,
-        hslToRgb : hslToRgb,
-        rgbToHsv : rgbToHsv,
-        hsvToRgb : hsvToRgb,
-        rgbToHex : rgbToHex,
-        rgbaToHex : rgbaToHex,
-        boundAlpha : boundAlpha,
-        bound01 : bound01,
-        clamp01 : clamp01,
-        parseIntFromHex : parseIntFromHex,
-        isOnePointZero : isOnePointZero,
-        isPercentage : isPercentage,
-        pad2 : pad2,
-        convertToPercentage : convertToPercentage,
-        convertHexToDecimal : convertHexToDecimal,
-        stringInputToObject : stringInputToObject
-
-    });
-
-    return skylark.attach("data.colors",colors);
-
-});
-
-define('skylark-data-color/Color',[
-    "skylark-langx/langx",
-    "./colors"
-],function(langx,colors) {
-    /*
-     * This module uses the following open source code:
-     *   TinyColor v1.1.2
-     *     https://github.com/bgrins/TinyColor
-     *     Brian Grinstead, MIT License
-     */
-
-    var inputToRGB = colors.inputToRGB,
-        rgbToRgb = colors.rgbToRgb,
-        rgbToHsl = colors.rgbToHsl,
-        hslToRgb = colors.hslToRgb,
-        rgbToHsv = colors.rgbToHsv,
-        rgbToHex = colors.rgbToHex,
-        rgbaToHex = colors.rgbaToHex,
-        boundAlpha = colors.boundAlpha,
-        bound01 = colors.bound01,
-        clamp01 = colors.clamp01,
-        parseIntFromHex = colors.parseIntFromHex,
-        isOnePointZero = colors.isOnePointZero,
-        isPercentage = colors.isPercentage,
-        pad2 = colors.pad2,
-        convertToPercentage = colors.convertToPercentage,
-        convertHexToDecimal = colors.convertHexToDecimal,
-        stringInputToObject = colors.stringInputToObject,
-        hexNames = colors.hexNames;
-
-    var tinyCounter = 0,
-        math = Math,
-        mathRound = math.round,
-        mathMin = math.min,
-        mathMax = math.max,
-        mathRandom = math.random;
-
-	var Color = colors.Color = langx.klass({
-		init : function(color, opts) {
-	        color = (color) ? color : '';
+         
+	var Color = klass({
+		init : function(rgb, opts) {
     	    opts = opts || { };
 
-	        // If input is already a Color, return itself
-	        if (color instanceof Color) {
-	           return color;
-	        }
-
-	        var rgb = inputToRGB(color);
-	        this._originalInput = color,
+	        //var rgb = inputToRGB(color);
+            //
+	        //this._originalInput = color,
+            if (types.isString(rgb)) {
+                rgb= conversion.hexToRgb(rgb);
+            }
 	        this._r = rgb.r,
 	        this._g = rgb.g,
 	        this._b = rgb.b,
-	        this._a = rgb.a,
+	        this._a = types.isDefined(rgb.a) ? rgb.a : 1,
+
 	        this._roundA = mathRound(1000 * this._a) / 1000,
 	        this._format = opts.format || rgb.format;
 	        this._gradientType = opts.gradientType;
@@ -11447,87 +11645,117 @@ define('skylark-data-color/Color',[
 	        if (this._g < 1) { this._g = mathRound(this._g); }
 	        if (this._b < 1) { this._b = mathRound(this._b); }
 
-	        this._ok = rgb.ok;
-	        this._tc_id = tinyCounter++;
 	    },
 
+        /*
+         * Return a boolean indicating whether the color's perceived brightness is dark.
+         */
         isDark: function() {
             return this.getBrightness() < 128;
         },
+
+        /*
+         * Return a boolean indicating whether the color's perceived brightness is light.
+         */
         isLight: function() {
             return !this.isDark();
         },
-        isValid: function() {
-            return this._ok;
-        },
+
         getOriginalInput: function() {
           return this._originalInput;
         },
+
         getFormat: function() {
             return this._format;
         },
+
+        /*
+         * Returns the alpha value of a color, from 0-1
+         */
         getAlpha: function() {
             return this._a;
         },
+
+        /*
+         * Returns the perceived brightness of a color, from 0-255.
+         */
         getBrightness: function() {
             var rgb = this.toRgb();
             return (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
         },
+
+        /*
+         * Sets the alpha value on a current color. Accepted range is in between 0-1.
+         */
         setAlpha: function(value) {
             this._a = boundAlpha(value);
             this._roundA = mathRound(1000 * this._a) / 1000;
             return this;
         },
+
         toHsv: function() {
-            var hsv = rgbToHsv(this._r, this._g, this._b);
+            var hsv = conversion.rgbToHsv(this._r, this._g, this._b);
             return { h: hsv.h * 360, s: hsv.s, v: hsv.v, a: this._a };
         },
+
         toHsvString: function() {
-            var hsv = rgbToHsv(this._r, this._g, this._b);
+            var hsv = conversion.rgbToHsv(this._r, this._g, this._b);
             var h = mathRound(hsv.h * 360), s = mathRound(hsv.s * 100), v = mathRound(hsv.v * 100);
             return (this._a == 1) ?
               "hsv("  + h + ", " + s + "%, " + v + "%)" :
               "hsva(" + h + ", " + s + "%, " + v + "%, "+ this._roundA + ")";
         },
+
         toHsl: function() {
-            var hsl = rgbToHsl(this._r, this._g, this._b);
+            var hsl = conversion.rgbToHsl(this._r, this._g, this._b);
             return { h: hsl.h * 360, s: hsl.s, l: hsl.l, a: this._a };
         },
+
         toHslString: function() {
-            var hsl = rgbToHsl(this._r, this._g, this._b);
+            var hsl = conversion.rgbToHsl(this._r, this._g, this._b);
             var h = mathRound(hsl.h * 360), s = mathRound(hsl.s * 100), l = mathRound(hsl.l * 100);
             return (this._a == 1) ?
               "hsl("  + h + ", " + s + "%, " + l + "%)" :
               "hsla(" + h + ", " + s + "%, " + l + "%, "+ this._roundA + ")";
         },
+
         toHex: function(allow3Char) {
-            return rgbToHex(this._r, this._g, this._b, allow3Char);
+            return conversion.rgbToHex(this._r, this._g, this._b, allow3Char);
         },
+
         toHexString: function(allow3Char) {
             return '#' + this.toHex(allow3Char);
         },
+
         toHex8: function() {
-            return rgbaToHex(this._r, this._g, this._b, this._a);
+            return conversion.rgbaToHex(this._r, this._g, this._b, this._a);
         },
+
         toHex8String: function() {
             return '#' + this.toHex8();
         },
+
         toRgb: function() {
             return { r: mathRound(this._r), g: mathRound(this._g), b: mathRound(this._b), a: this._a };
         },
+
         toRgbString: function() {
             return (this._a == 1) ?
               "rgb("  + mathRound(this._r) + ", " + mathRound(this._g) + ", " + mathRound(this._b) + ")" :
               "rgba(" + mathRound(this._r) + ", " + mathRound(this._g) + ", " + mathRound(this._b) + ", " + this._roundA + ")";
         },
+
         toPercentageRgb: function() {
-            return { r: mathRound(bound01(this._r, 255) * 100) + "%", g: mathRound(bound01(this._g, 255) * 100) + "%", b: mathRound(bound01(this._b, 255) * 100) + "%", a: this._a };
+            return { r: mathRound(conversion.bound01(this._r, 255) * 100) + "%", g: mathRound(conversion.bound01(this._g, 255) * 100) + "%", b: mathRound(conversion.bound01(this._b, 255) * 100) + "%", a: this._a };
         },
+
         toPercentageRgbString: function() {
             return (this._a == 1) ?
-              "rgb("  + mathRound(bound01(this._r, 255) * 100) + "%, " + mathRound(bound01(this._g, 255) * 100) + "%, " + mathRound(bound01(this._b, 255) * 100) + "%)" :
-              "rgba(" + mathRound(bound01(this._r, 255) * 100) + "%, " + mathRound(bound01(this._g, 255) * 100) + "%, " + mathRound(bound01(this._b, 255) * 100) + "%, " + this._roundA + ")";
+              "rgb("  + mathRound(conversion.bound01(this._r, 255) * 100) + "%, " + mathRound(conversion.bound01(this._g, 255) * 100) + "%, " + mathRound(conversion.bound01(this._b, 255) * 100) + "%)" :
+              
+              "rgba(" + mathRound(conversion.bound01(this._r, 255) * 100) + "%, " + mathRound(conversion.bound01(this._g, 255) * 100) + "%, " + mathRound(conversion.bound01(this._b, 255) * 100) + "%, " + this._roundA + ")";
         },
+
         toName: function() {
             if (this._a === 0) {
                 return "transparent";
@@ -11539,8 +11767,9 @@ define('skylark-data-color/Color',[
 
             return hexNames[rgbToHex(this._r, this._g, this._b, true)] || false;
         },
+
         toFilter: function(secondColor) {
-            var hex8String = '#' + rgbaToHex(this._r, this._g, this._b, this._a);
+            var hex8String = '#' + conversion.rgbaToHex(this._r, this._g, this._b, this._a);
             var secondHex8String = hex8String;
             var gradientType = this._gradientType ? "GradientType = 1, " : "";
 
@@ -11551,6 +11780,7 @@ define('skylark-data-color/Color',[
 
             return "progid:DXImageTransform.Microsoft.gradient("+gradientType+"startColorstr="+hex8String+",endColorstr="+secondHex8String+")";
         },
+
         toString: function(format) {
             var formatSet = !!format;
             format = format || this._format;
@@ -11595,61 +11825,1022 @@ define('skylark-data-color/Color',[
             return formattedString || this.toHexString();
         },
 
-        _applyModification: function(fn, args) {
-            var color = fn.apply(null, [this].concat([].slice.call(args)));
-            this._r = color._r;
-            this._g = color._g;
-            this._b = color._b;
-            this.setAlpha(color._a);
-            return this;
-        },
-        lighten: function() {
-            return this._applyModification(lighten, arguments);
-        },
-        brighten: function() {
-            return this._applyModification(brighten, arguments);
-        },
-        darken: function() {
-            return this._applyModification(darken, arguments);
-        },
-        desaturate: function() {
-            return this._applyModification(desaturate, arguments);
-        },
-        saturate: function() {
-            return this._applyModification(saturate, arguments);
-        },
-        greyscale: function() {
-            return this._applyModification(greyscale, arguments);
-        },
-        spin: function() {
-            return this._applyModification(spin, arguments);
+        // modification methods
+        // ----------------------
+        // Thanks to less.js for some of the basics here
+        // <https://github.com/cloudhead/less.js/blob/master/lib/less/functions.js>
+
+        /*
+         * Lighten the color a given amount, from 0 to 100. Providing 100 will always return white.
+         */
+        lighten: function(amount) {
+            amount = (amount === 0) ? 0 : (amount || 10);
+            var hsl = this.toHsl();
+            hsl.l += amount / 100;
+            hsl.l = clamp01(hsl.l);
+            return Color.fromHsl(hsl);
         },
 
-        _applyCombination: function(fn, args) {
-            return fn.apply(null, [this].concat([].slice.call(args)));
+        /*
+         * Brighten the color a given amount, from 0 to 100
+         */
+        brighten: function(amount) {
+            amount = (amount === 0) ? 0 : (amount || 10);
+            var rgb = this.toRgb();
+            rgb.r = mathMax(0, mathMin(255, rgb.r - mathRound(255 * - (amount / 100))));
+            rgb.g = mathMax(0, mathMin(255, rgb.g - mathRound(255 * - (amount / 100))));
+            rgb.b = mathMax(0, mathMin(255, rgb.b - mathRound(255 * - (amount / 100))));
+            return new Color(rgb);
         },
-        analogous: function() {
-            return this._applyCombination(analogous, arguments);
+
+        /*
+         * Darken the color a given amount, from 0 to 100. Providing 100 will always return black.
+         */
+        darken: function(amount) {
+            amount = (amount === 0) ? 0 : (amount || 10);
+            var hsl = this.toHsl();
+            hsl.l -= amount / 100;
+            hsl.l = clamp01(hsl.l);
+            return Color.fromHsl(hsl);
         },
+
+        /*
+         *  Desaturate the color a given amount, from 0 to 100. Providing 100 will is the same as calling greyscale.
+         */
+        desaturate: function(amount) {
+            amount = (amount === 0) ? 0 : (amount || 10);
+            var hsl = this.toHsl();
+            hsl.s -= amount / 100;
+            hsl.s = clamp01(hsl.s);
+            return Color.fromHsl(hsl);
+        },
+
+        /*
+         *  Saturate the color a given amount, from 0 to 100.
+         */
+        saturate: function(amount) {
+            amount = (amount === 0) ? 0 : (amount || 10);
+            var hsl = this.toHsl();
+            hsl.s += amount / 100;
+            hsl.s = clamp01(hsl.s);
+            return Color.fromHsl(hsl);
+        },
+
+        /*
+         * Completely desaturates a color into greyscale. Same as calling desaturate(100).
+         */
+        greyscale: function() {
+            return this.desaturate(100);
+        },
+
+        /*
+         * Spin the hue a given amount, from -360 to 360. Calling with 0, 360, or -360 will do nothing (since it sets the hue back to what it was before).
+         */
+        spin: function(amount) {
+            var hsl = this.toHsl();
+            var hue = (mathRound(hsl.h) + amount) % 360;
+            hsl.h = hue < 0 ? 360 + hue : hue;
+            return Color.fromHsl(hsl);
+        },
+
+
+        // combination methods
+
+        /*
+         * Finds analogous colors the color.
+         */
+        analogous: function(results, slices) {
+            results = results || 6;
+            slices = slices || 30;
+
+            var hsl = this.toHsl();
+            var part = 360 / slices;
+            var ret = [this];
+
+            for (hsl.h = ((hsl.h - (part * results >> 1)) + 720) % 360; --results; ) {
+                hsl.h = (hsl.h + part) % 360;
+                ret.push(Color.fromHsl(hsl));
+            }
+            return ret;
+        },
+
         complement: function() {
-            return this._applyCombination(complement, arguments);
+            var hsl = this.toHsl();
+            hsl.h = (hsl.h + 180) % 360;
+            return Color.fromHsl(hsl);
         },
-        monochromatic: function() {
-            return this._applyCombination(monochromatic, arguments);
+
+        /*
+         * Finds monochromatic colors to the color.
+         */
+        monochromatic: function(results) {
+            results = results || 6;
+            var hsv = this.toHsv();
+            var h = hsv.h, s = hsv.s, v = hsv.v;
+            var ret = [];
+            var modification = 1 / results;
+
+            while (results--) {
+                ret.push(Color.fromHsv({ h: h, s: s, v: v}));
+                v = (v + modification) % 1;
+            }
+
+            return ret;
         },
+
+
+        /*
+         * Generates a split complements of the color.
+         */
         splitcomplement: function() {
-            return this._applyCombination(splitcomplement, arguments);
+            var hsl = this.toHsl();
+            var h = hsl.h;
+            return [
+                this,
+                Color.fromHsl({ h: (h + 72) % 360, s: hsl.s, l: hsl.l}),
+                Color.fromHsl({ h: (h + 216) % 360, s: hsl.s, l: hsl.l})
+            ];
         },
+
+        /*
+         * Generates a color triad of the color.
+         */
         triad: function() {
-            return this._applyCombination(triad, arguments);
+            var hsl = this.toHsl();
+            var h = hsl.h;
+            return [
+                this,
+                Color.fromHsl({ h: (h + 120) % 360, s: hsl.s, l: hsl.l }),
+                Color.fromHsl({ h: (h + 240) % 360, s: hsl.s, l: hsl.l })
+            ];
         },
+
         tetrad: function() {
-            return this._applyCombination(tetrad, arguments);
+            var hsl = this.toHsl();
+            var h = hsl.h;
+            return [
+                this,
+                Color.fromHsl({ h: (h + 90) % 360, s: hsl.s, l: hsl.l }),
+                Color.fromHsl({ h: (h + 180) % 360, s: hsl.s, l: hsl.l }),
+                Color.fromHsl({ h: (h + 270) % 360, s: hsl.s, l: hsl.l })
+            ];
+        },
+
+
+        mix : function(color2,amount) {
+            amount = (amount === 0) ? 0 : (amount || 50);
+
+            var rgb1 = this.toRgb();
+            var rgb2 = color2.toRgb();
+
+            var p = amount / 100;
+            var w = p * 2 - 1;
+            var a = rgb2.a - rgb1.a;
+
+            var w1;
+
+            if (w * a == -1) {
+                w1 = w;
+            } else {
+                w1 = (w + a) / (1 + w * a);
+            }
+
+            w1 = (w1 + 1) / 2;
+
+            var w2 = 1 - w1;
+
+            var rgba = {
+                r: rgb2.r * w1 + rgb1.r * w2,
+                g: rgb2.g * w1 + rgb1.g * w2,
+                b: rgb2.b * w1 + rgb1.b * w2,
+                a: rgb2.a * p  + rgb1.a * (1 - p)
+            };
+
+            return new Color(rgba);
+
+        },
+
+        isValid : function(){
+            return true;
         }
 	});
 
+    // `equals`
+    // Can be called with any Color input
+    Color.equals = function (color1, color2) {
+        if (!color1 || !color2) { return false; }
+        color1 = Color.parse(color1);
+        color2 = Color.parse(color2);
+
+        return color1.toRgbString() == color2.toRgbString();
+    };
+    
+
+    Color.random = function() {
+        return Color.fromRatio({
+            r: mathRandom(),
+            g: mathRandom(),
+            b: mathRandom()
+        });
+    };
+
+    Color.fromRgba = function(r,g,b,a) {
+        return new Color({
+            r,
+            g,
+            b,
+            a
+        })  
+    };
+
+    Color.fromRgb = function(r,g,b) {
+        return new Color({
+            r,
+            g,
+            b
+        })  
+    };
+
+    Color.fromHsl = function(h,s,l,a) {
+        var rgb = conversion.hslToRgb(h,s,l)
+        return new Color(rgb)  
+    };
+
+    Color.fromHsv = function(h,s,v,a) {
+        var rgb = conversion.hsvToRgb(h,s,v)
+        return new Color(rgb)  
+    }; 
+
+    return skylark.attach("graphics.Color",Color);
+});
+
+define('skylark-domx-popups/popups',[
+	"skylark-langx-ns"
+],function(skylark){
+
+	var stack = [];
 
 
+
+    /**
+    * get the offset below/above and left/right element depending on screen position
+    * Thanks https://github.com/jquery/jquery-ui/blob/master/ui/jquery.ui.datepicker.js
+    */
+    function around(ref) {
+        var extraY = 0;
+        var dpSize = geom.size(popup);
+        var dpWidth = dpSize.width;
+        var dpHeight = dpSize.height;
+        var refHeight = geom.height(ref);
+        var doc = ref.ownerDocument;
+        var docElem = doc.documentElement;
+        var viewWidth = docElem.clientWidth + geom.scrollLeft(doc);
+        var viewHeight = docElem.clientHeight + geom.scrollTop(doc);
+        var offset = geom.pagePosition(ref);
+        var offsetLeft = offset.left;
+        var offsetTop = offset.top;
+
+        offsetTop += refHeight;
+
+        offsetLeft -=
+            Math.min(offsetLeft, (offsetLeft + dpWidth > viewWidth && viewWidth > dpWidth) ?
+            Math.abs(offsetLeft + dpWidth - viewWidth) : 0);
+
+        offsetTop -=
+            Math.min(offsetTop, ((offsetTop + dpHeight > viewHeight && viewHeight > dpHeight) ?
+            Math.abs(dpHeight + refHeight - extraY) : extraY));
+
+        return {
+            top: offsetTop,
+            bottom: offset.bottom,
+            left: offsetLeft,
+            right: offset.right,
+            width: offset.width,
+            height: offset.height
+        };
+    }
+
+
+	/*
+	 * Popup the ui elment at the specified position
+	 * @param popup  element to display
+	 * @param options
+	 *  - around {HtmlEleent}
+	 *  - at {x,y}
+	 *  - parent {}
+	 */
+
+	function open(popup,options) {
+		if (options.around) {
+			//A DOM node that should be used as a reference point for placing the pop-up. 
+		}
+
+	}
+
+	/*
+	 * Close specified popup and any popups that it parented.
+	 * If no popup is specified, closes all popups.
+     */
+	function close(popup) {
+		var count = 0;
+
+		if (popup) {
+			for (var i= stack.length-1; i>=0; i--) {
+				if (stack[i].popup == popup) {
+					count = stack.length - i; 
+					break;
+				}
+			}
+		} else {
+			count = stack.length;
+		}
+		for (var i=0; i<count ; i++ ) {
+			var top = stack.pop(),
+				popup1 = top.popup;
+			if (popup1.hide) {
+				popup1.hide();
+			} else {
+
+			}
+
+		} 
+	}
+	return skylark.attach("domx.popups",{
+		around,
+		open,
+		close
+	});
+});
+define('skylark-domx-popups/calcOffset',[
+	"skylark-domx-geom",
+	"./popups"
+],function(
+	geom,
+	popups
+){
+    /**
+    * checkOffset - get the offset below/above and left/right element depending on screen position
+    * Thanks https://github.com/jquery/jquery-ui/blob/master/ui/jquery.ui.datepicker.js
+    */
+    function calcOffset(popup, ref) {
+        var extraY = 0;
+        var dpSize = geom.size(popup);
+        var dpWidth = dpSize.width;
+        var dpHeight = dpSize.height;
+        var refHeight = geom.height(ref);
+        var doc = popup.ownerDocument;
+        var docElem = doc.documentElement;
+        var viewWidth = docElem.clientWidth + geom.scrollLeft(doc);
+        var viewHeight = docElem.clientHeight + geom.scrollTop(doc);
+        var offset = geom.pagePosition(ref);
+        var offsetLeft = offset.left;
+        var offsetTop = offset.top;
+
+        offsetTop += refHeight;
+
+        offsetLeft -=
+            Math.min(offsetLeft, (offsetLeft + dpWidth > viewWidth && viewWidth > dpWidth) ?
+            Math.abs(offsetLeft + dpWidth - viewWidth) : 0);
+
+        offsetTop -=
+            Math.min(offsetTop, ((offsetTop + dpHeight > viewHeight && viewHeight > dpHeight) ?
+            Math.abs(dpHeight + refHeight - extraY) : extraY));
+
+        return {
+            top: offsetTop,
+            bottom: offset.bottom,
+            left: offsetLeft,
+            right: offset.right,
+            width: offset.width,
+            height: offset.height
+        };
+    }
+
+    return popups.calcOffset = calcOffset;
+		
+});
+define('skylark-domx-popups/Dropdown',[
+  "skylark-langx/langx",
+  "skylark-domx-browser",
+  "skylark-domx-eventer",
+  "skylark-domx-noder",
+  "skylark-domx-geom",
+  "skylark-domx-query",
+  "skylark-domx-plugins",
+  "./popups"
+],function(langx,browser,eventer,noder,geom,$,plugins,popups){
+
+  'use strict';
+
+  // DROPDOWN CLASS DEFINITION
+  // =========================
+
+  var backdrop = '.dropdown-backdrop';
+  var toggle   = '[data-toggle="dropdown"]';
+
+  var Dropdown = plugins.Plugin.inherit({
+    klassName: "Dropdown",
+
+    pluginName : "domx.dropdown",
+
+    options : {
+      "selectors" : {
+        "toggler" : '[data-toggle="dropdown"],.dropdown-menu'
+      }
+
+    },
+
+    _construct : function(elm,options) {
+      this.overrided(elm,options);
+
+      var $el = this.$element = $(this._elm);
+      $el.on('click.dropdown', this.toggle);
+      $el.on('keydown.dropdown', this.options.selectors.toggler,this.keydown);
+    },
+
+    toggle : function (e) {
+      var $this = $(this)
+
+      if ($this.is('.disabled, :disabled')) {
+        return;
+      }
+
+      var $parent  = getParent($this)
+      var isActive = $parent.hasClass('open');
+
+      clearMenus()
+
+      if (!isActive) {
+        if ('ontouchstart' in document.documentElement && !$parent.closest('.navbar-nav').length) {
+          // if mobile we use a backdrop because click events don't delegate
+          $(document.createElement('div'))
+            .addClass('dropdown-backdrop')
+            .insertAfter($(this))
+            .on('click', clearMenus)
+        }
+
+        var relatedTarget = { relatedTarget: this }
+        $parent.trigger(e = eventer.create('show.dropdown', relatedTarget))
+
+        if (e.isDefaultPrevented()) {
+          return;
+        }
+
+        $this
+          .trigger('focus')
+          .attr('aria-expanded', 'true')
+
+        $parent
+          .toggleClass('open')
+          .trigger(eventer.create('shown.dropdown', relatedTarget))
+      }
+
+      return false
+    },
+
+    keydown : function (e) {
+      if (!/(38|40|27|32)/.test(e.which) || /input|textarea/i.test(e.target.tagName)) {
+        return;
+      }
+
+      var $this = $(this);
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      if ($this.is('.disabled, :disabled')) {
+        return;
+      }
+
+      var $parent  = getParent($this)
+      var isActive = $parent.hasClass('open')
+
+      if (!isActive && e.which != 27 || isActive && e.which == 27) {
+        if (e.which == 27) $parent.find(toggle).trigger('focus')
+        return $this.trigger('click')
+      }
+
+      var desc = ' li:not(.disabled):visible a'
+      var $items = $parent.find('.dropdown-menu' + desc)
+
+      if (!$items.length) return
+
+      var index = $items.index(e.target)
+
+      if (e.which == 38 && index > 0)                 index--         // up
+      if (e.which == 40 && index < $items.length - 1) index++         // down
+      if (!~index)                                    index = 0
+
+      $items.eq(index).trigger('focus');
+    }
+
+  });
+
+  function getParent($this) {
+    var selector = $this.attr('data-target')
+
+    if (!selector) {
+      selector = $this.attr('href')
+      selector = selector && /#[A-Za-z]/.test(selector) && selector.replace(/.*(?=#[^\s]*$)/, '') // strip for ie7
+    }
+
+    var $parent = selector && $(selector);
+
+    return $parent && $parent.length ? $parent : $this.parent();
+  }
+
+  function clearMenus(e) {
+    if (e && e.which === 3) return
+    $(backdrop).remove()
+    $(toggle).each(function () {
+      var $this         = $(this)
+      var $parent       = getParent($this)
+      var relatedTarget = { relatedTarget: this }
+
+      if (!$parent.hasClass('open')) return
+
+      if (e && e.type == 'click' && /input|textarea/i.test(e.target.tagName) && noder.contains($parent[0], e.target)) return
+
+      $parent.trigger(e = eventer.create('hide.dropdown', relatedTarget))
+
+      if (e.isDefaultPrevented()) return
+
+      $this.attr('aria-expanded', 'false')
+      $parent.removeClass('open').trigger(eventer.create('hidden.dropdown', relatedTarget))
+    })
+  }
+
+
+
+  // APPLY TO STANDARD DROPDOWN ELEMENTS
+  // ===================================
+  $(document)
+    .on('click.dropdown.data-api', clearMenus)
+    .on('click.dropdown.data-api', '.dropdown form', function (e) { e.stopPropagation() });
+
+  plugins.register(Dropdown);
+
+  return popups.Dropdown = Dropdown;
+
+});
+
+define('skylark-domx-popups/SelectList',[
+  "skylark-langx/langx",
+  "skylark-domx-browser",
+  "skylark-domx-eventer",
+  "skylark-domx-noder",
+  "skylark-domx-geom",
+  "skylark-domx-query",
+  "skylark-domx-plugins",
+  "./popups",
+  "./Dropdown"
+],function(langx,browser,eventer,noder,geom,$,plugins,popups,Dropdown){
+
+
+	// SELECT CONSTRUCTOR AND PROTOTYPE
+
+	var SelectList = plugins.Plugin.inherit({
+		klassName: "SelectList",
+
+		pluginName : "domx.selectlist",
+	
+		options : {
+			emptyLabelHTML: '<li data-value=""><a href="#">No items</a></li>'
+
+		},
+
+    	_construct : function(elm,options) {
+      		this.overrided(elm,options);
+      		this.$element = $(this._elm);
+			//this.options = langx.mixin({}, $.fn.selectlist.defaults, options);
+
+
+			this.$button = this.$element.find('.btn.dropdown-toggle');
+			this.$hiddenField = this.$element.find('.hidden-field');
+			this.$label = this.$element.find('.selected-label');
+			this.$dropdownMenu = this.$element.find('.dropdown-menu');
+
+			this.$button.plugin("domx.dropdown");
+
+			this.$element.on('click.selectlist', '.dropdown-menu a', langx.proxy(this.itemClicked, this));
+			this.setDefaultSelection();
+
+			if (this.options.resize === 'auto' || this.$element.attr('data-resize') === 'auto') {
+				this.resize();
+			}
+
+			// if selectlist is empty or is one item, disable it
+			var items = this.$dropdownMenu.children('li');
+			if( items.length === 0) {
+				this.disable();
+				this.doSelect( $(this.options.emptyLabelHTML));
+			}
+
+			// support jumping focus to first letter in dropdown when key is pressed
+			this.$element.on('shown.dropdown', function () {
+					var $this = $(this);
+					// attach key listener when dropdown is shown
+					$(document).on('keypress.selectlist', function(e){
+
+						// get the key that was pressed
+						var key = String.fromCharCode(e.which);
+						// look the items to find the first item with the first character match and set focus
+						$this.find("li").each(function(idx,item){
+							if ($(item).text().charAt(0).toLowerCase() === key) {
+								$(item).children('a').focus();
+								return false;
+							}
+						});
+
+				});
+			});
+
+			// unbind key event when dropdown is hidden
+			this.$element.on('hide.dropdown', function () {
+					$(document).off('keypress.selectlist');
+			});
+		},
+
+		_destroy: function () {
+			this.$element.remove();
+			// any external bindings
+			// [none]
+			// empty elements to return to original markup
+			// [none]
+			// returns string of markup
+			return this.$element[0].outerHTML;
+		},
+
+		doSelect: function ($item) {
+			var $selectedItem;
+			this.$selectedItem = $selectedItem = $item;
+
+			this.$hiddenField.val(this.$selectedItem.attr('data-value'));
+			this.$label.html($(this.$selectedItem.children()[0]).html());
+
+			// clear and set selected item to allow declarative init state
+			// unlike other controls, selectlist's value is stored internal, not in an input
+			this.$element.find('li').each(function () {
+				if ($selectedItem.is($(this))) {
+					$(this).attr('data-selected', true);
+				} else {
+					$(this).removeData('selected').removeAttr('data-selected');
+				}
+			});
+		},
+
+		itemClicked: function (e) {
+			this.$element.trigger('clicked.selectlist', this.$selectedItem);
+
+			e.preventDefault();
+			// ignore if a disabled item is clicked
+			if ($(e.currentTarget).parent('li').is('.disabled, :disabled')) { return; }
+
+			// is clicked element different from currently selected element?
+			if (!($(e.target).parent().is(this.$selectedItem))) {
+				this.itemChanged(e);
+			}
+
+			// return focus to control after selecting an option
+			this.$element.find('.dropdown-toggle').focus();
+		},
+
+		itemChanged: function (e) {
+			//selectedItem needs to be <li> since the data is stored there, not in <a>
+			this.doSelect($(e.target).closest('li'));
+
+			// pass object including text and any data-attributes
+			// to onchange event
+			var data = this.selectedItem();
+			// trigger changed event
+			this.$element.trigger('changed.selectlist', data);
+		},
+
+		resize: function () {
+			var width = 0;
+			var newWidth = 0;
+			var sizer = $('<div/>').addClass('selectlist-sizer');
+
+
+			if (Boolean($(document).find('html').hasClass('fuelux'))) {
+				// default behavior for fuel ux setup. means fuelux was a class on the html tag
+				$(document.body).append(sizer);
+			} else {
+				// fuelux is not a class on the html tag. So we'll look for the first one we find so the correct styles get applied to the sizer
+				$('.fuelux:first').append(sizer);
+			}
+
+			sizer.append(this.$element.clone());
+
+			this.$element.find('a').each(function () {
+				sizer.find('.selected-label').text($(this).text());
+				newWidth = sizer.find('.selectlist').outerWidth();
+				newWidth = newWidth + sizer.find('.sr-only').outerWidth();
+				if (newWidth > width) {
+					width = newWidth;
+				}
+			});
+
+			if (width <= 1) {
+				return;
+			}
+
+			this.$button.css('width', width);
+			this.$dropdownMenu.css('width', width);
+
+			sizer.remove();
+		},
+
+		selectedItem: function () {
+			var txt = this.$selectedItem.text();
+			return langx.mixin({
+				text: txt
+			}, this.$selectedItem.data());
+		},
+
+		selectByText: function (text) {
+			var $item = $([]);
+			this.$element.find('li').each(function () {
+				if ((this.textContent || this.innerText || $(this).text() || '').toLowerCase() === (text || '').toLowerCase()) {
+					$item = $(this);
+					return false;
+				}
+			});
+			this.doSelect($item);
+		},
+
+		selectByValue: function (value) {
+			var selector = 'li[data-value="' + value + '"]';
+			this.selectBySelector(selector);
+		},
+
+		selectByIndex: function (index) {
+			// zero-based index
+			var selector = 'li:eq(' + index + ')';
+			this.selectBySelector(selector);
+		},
+
+		selectBySelector: function (selector) {
+			var $item = this.$element.find(selector);
+			this.doSelect($item);
+		},
+
+		setDefaultSelection: function () {
+			var $item = this.$element.find('li[data-selected=true]').eq(0);
+
+			if ($item.length === 0) {
+				$item = this.$element.find('li').has('a').eq(0);
+			}
+
+			this.doSelect($item);
+		},
+
+		enable: function () {
+			this.$element.removeClass('disabled');
+			this.$button.removeClass('disabled');
+		},
+
+		disable: function () {
+			this.$element.addClass('disabled');
+			this.$button.addClass('disabled');
+		}
+
+	});	
+
+
+	SelectList.prototype.getValue = SelectList.prototype.selectedItem;
+
+
+    plugins.register(SelectList);
+
+	return popups.SelectList = SelectList;
+});
+
+define('skylark-domx-popups/main',[
+	"./popups",
+	"./calcOffset",
+	"./Dropdown",
+	"./SelectList"
+],function(popups){
+	return popups;
+});
+define('skylark-domx-popups', ['skylark-domx-popups/main'], function (main) { return main; });
+
+define('skylark-graphics-color/parse',[
+    "skylark-langx-strings",
+    "./Color",
+    "./_names",
+    "./_conversion"
+],function(
+    strings,
+    Color,
+    names,
+    conversion
+){
+    var math = Math,
+        mathRound = math.round,
+        mathMin = math.min,
+        mathMax = math.max,
+        mathRandom = math.random;
+
+    var matchers = (function() {
+
+        // <http://www.w3.org/TR/css3-values/#integers>
+        var CSS_INTEGER = "[-\\+]?\\d+%?";
+
+        // <http://www.w3.org/TR/css3-values/#number-value>
+        var CSS_NUMBER = "[-\\+]?\\d*\\.\\d+%?";
+
+        // Allow positive/negative integer/number.  Don't capture the either/or, just the entire outcome.
+        var CSS_UNIT = "(?:" + CSS_NUMBER + ")|(?:" + CSS_INTEGER + ")";
+
+        // Actual matching.
+        // Parentheses and commas are optional, but not required.
+        // Whitespace can take the place of commas or opening paren
+        var PERMISSIVE_MATCH3 = "[\\s|\\(]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")\\s*\\)?";
+        var PERMISSIVE_MATCH4 = "[\\s|\\(]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")[,|\\s]+(" + CSS_UNIT + ")\\s*\\)?";
+
+        return {
+            rgb: new RegExp("rgb" + PERMISSIVE_MATCH3),
+            rgba: new RegExp("rgba" + PERMISSIVE_MATCH4),
+            hsl: new RegExp("hsl" + PERMISSIVE_MATCH3),
+            hsla: new RegExp("hsla" + PERMISSIVE_MATCH4),
+            hsv: new RegExp("hsv" + PERMISSIVE_MATCH3),
+            hsva: new RegExp("hsva" + PERMISSIVE_MATCH4),
+            hex3: /^([0-9a-fA-F]{1})([0-9a-fA-F]{1})([0-9a-fA-F]{1})$/,
+            hex6: /^([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/,
+            hex8: /^([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/,
+            hex3s: /^#([0-9a-fA-F]{1})([0-9a-fA-F]{1})([0-9a-fA-F]{1})$/,
+            hex6s: /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/,
+            hex8s: /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/
+        };
+    })();
+
+
+    // Replace a decimal with it's percentage value
+    function convertToPercentage(n) {
+        if (n <= 1) {
+            n = (n * 100) + "%";
+        }
+
+        return n;
+    }
+
+    // Parse a base-16 hex value into a base-10 integer
+    function parseIntFromHex(val) {
+        return parseInt(val, 16);
+    }
+        
+
+      // Converts a decimal to a hex value
+    function convertDecimalToHex(d) {
+        return Math.round(parseFloat(d) * 255).toString(16);
+    }
+
+    // Converts a hex value to a decimal
+    function convertHexToDecimal(h) {
+        return (parseIntFromHex(h) / 255);
+    }
+          
+    // `stringInputToObject`
+    // Permissive string parsing.  Take in a number of formats, and output an object
+    // based on detected format.  Returns `{ r, g, b }` or `{ h, s, l }` or `{ h, s, v}`
+    function stringInputToObject(color) {
+
+        color = strings.trim(color).toLowerCase();
+        var named = false;
+        if (names[color]) {
+            color = names[color];
+            named = true;
+        }
+        else if (color == 'transparent') {
+            return { r: 0, g: 0, b: 0, a: 0, format: "name" };
+        }
+
+        // Try to match string input using regular expressions.
+        // Keep most of the number bounding out of this function - don't worry about [0,1] or [0,100] or [0,360]
+        // Just return an object and let the conversion functions handle that.
+        // This way the result will be the same whether the tinycolor is initialized with string or object.
+        var match;
+        if ((match = matchers.rgb.exec(color))) {
+            return { r: match[1], g: match[2], b: match[3] };
+        }
+        if ((match = matchers.rgba.exec(color))) {
+            return { r: match[1], g: match[2], b: match[3], a: match[4] };
+        }
+        if ((match = matchers.hsl.exec(color))) {
+            return { h: match[1], s: match[2], l: match[3] };
+        }
+        if ((match = matchers.hsla.exec(color))) {
+            return { h: match[1], s: match[2], l: match[3], a: match[4] };
+        }
+        if ((match = matchers.hsv.exec(color))) {
+            return { h: match[1], s: match[2], v: match[3] };
+        }
+        if ((match = matchers.hsva.exec(color))) {
+            return { h: match[1], s: match[2], v: match[3], a: match[4] };
+        }
+        if ((match = matchers.hex8.exec(color)) || (match = matchers.hex8s.exec(color))) {
+            return {
+                a: convertHexToDecimal(match[1]),
+                r: parseIntFromHex(match[2]),
+                g: parseIntFromHex(match[3]),
+                b: parseIntFromHex(match[4]),
+                format: named ? "name" : "hex8"
+            };
+        }
+        if ((match = matchers.hex6.exec(color)) || (match = matchers.hex6s.exec(color))) {
+            return {
+                r: parseIntFromHex(match[1]),
+                g: parseIntFromHex(match[2]),
+                b: parseIntFromHex(match[3]),
+                format: named ? "name" : "hex"
+            };
+        }
+        if ((match = matchers.hex3.exec(color)) || (match = matchers.hex3s.exec(color))) {
+            return {
+                r: parseIntFromHex(match[1] + '' + match[1]),
+                g: parseIntFromHex(match[2] + '' + match[2]),
+                b: parseIntFromHex(match[3] + '' + match[3]),
+                format: named ? "name" : "hex"
+            };
+        }
+
+        return false;
+    }
+
+    // Given a string or object, convert that input to RGB
+    // Possible string inputs:
+    //
+    //     "red"
+    //     "#f00" or "f00"
+    //     "#ff0000" or "ff0000"
+    //     "#ff000000" or "ff000000"
+    //     "rgb 255 0 0" or "rgb (255, 0, 0)"
+    //     "rgb 1.0 0 0" or "rgb (1, 0, 0)"
+    //     "rgba (255, 0, 0, 1)" or "rgba 255, 0, 0, 1"
+    //     "rgba (1.0, 0, 0, 1)" or "rgba 1.0, 0, 0, 1"
+    //     "hsl(0, 100%, 50%)" or "hsl 0 100% 50%"
+    //     "hsla(0, 100%, 50%, 1)" or "hsla 0 100% 50%, 1"
+    //     "hsv(0, 100%, 100%)" or "hsv 0 100% 100%"
+    //
+    function parse(color) {
+        if (color instanceof Color) {
+            return color;
+        }
+
+        var rgb = { r: 0, g: 0, b: 0 };
+        var a = 1;
+        var ok = false;
+        var format = false;
+
+        if (typeof color == "string") {
+            color = stringInputToObject(color);
+        }
+
+        if (typeof color == "object") {
+            if (color.hasOwnProperty("r") && color.hasOwnProperty("g") && color.hasOwnProperty("b")) {
+                rgb = conversion.rgbToRgb(color.r, color.g, color.b);
+                ok = true;
+                format = String(color.r).substr(-1) === "%" ? "prgb" : "rgb";
+            }
+            else if (color.hasOwnProperty("h") && color.hasOwnProperty("s") && color.hasOwnProperty("v")) {
+                color.s = convertToPercentage(color.s);
+                color.v = convertToPercentage(color.v);
+                rgb = conversion.hsvToRgb(color.h, color.s, color.v);
+                ok = true;
+                format = "hsv";
+            }
+            else if (color.hasOwnProperty("h") && color.hasOwnProperty("s") && color.hasOwnProperty("l")) {
+                color.s = convertToPercentage(color.s);
+                color.l = convertToPercentage(color.l);
+                rgb =  conversion.hslToRgb(color.h, color.s, color.l);
+                ok = true;
+                format = "hsl";
+            }
+
+            if (color.hasOwnProperty("a")) {
+                a = color.a;
+            }
+        }
+
+
+        return new Color(
+            {
+                ok: ok,
+                r: mathMin(255, mathMax(rgb.r, 0)),
+                g: mathMin(255, mathMax(rgb.g, 0)),
+                b: mathMin(255, mathMax(rgb.b, 0)),
+                a: a
+            },
+            {
+                format: color.format || format,                
+            }
+        );
+
+    }
+
+    /*
     // If input is an object, force 1 into "1.0" to handle ratios properly
     // String input requires "1.0" as input, so 1 will be treated as 1
     Color.fromRatio = function(color, opts) {
@@ -11668,190 +12859,37 @@ define('skylark-data-color/Color',[
             color = newColor;
         }
 
-        return Color(color, opts);
+        return new Color(color, opts);
     };
+    */
 
-    // `equals`
-    // Can be called with any Color input
-    Color.equals = function (color1, color2) {
-        if (!color1 || !color2) { return false; }
-        return Color(color1).toRgbString() == Color(color2).toRgbString();
-    };
-    
-    Color.random = function() {
-        return Color.fromRatio({
-            r: mathRandom(),
-            g: mathRandom(),
-            b: mathRandom()
-        });
-    };
+    return Color.parse = parse;
+	
+});
+define('skylark-graphics-color/named',[
+	"./Color",
+	"./_names",
+	"./parse"
+],function(
+	Color,
+	parse,
+	_names
+){
+	var named = {};
 
-   // Modification Functions
-    // ----------------------
-    // Thanks to less.js for some of the basics here
-    // <https://github.com/cloudhead/less.js/blob/master/lib/less/functions.js>
+	for (var name in _names) {
+		named[name] = Color.parse(_names[name]);
+	}
 
-    function desaturate(color, amount) {
-        amount = (amount === 0) ? 0 : (amount || 10);
-        var hsl = Color(color).toHsl();
-        hsl.s -= amount / 100;
-        hsl.s = clamp01(hsl.s);
-        return Color(hsl);
-    }
-
-    function saturate(color, amount) {
-        amount = (amount === 0) ? 0 : (amount || 10);
-        var hsl = Color(color).toHsl();
-        hsl.s += amount / 100;
-        hsl.s = clamp01(hsl.s);
-        return Color(hsl);
-    }
-
-    function greyscale(color) {
-        return Color(color).desaturate(100);
-    }
-
-    function lighten (color, amount) {
-        amount = (amount === 0) ? 0 : (amount || 10);
-        var hsl = Color(color).toHsl();
-        hsl.l += amount / 100;
-        hsl.l = clamp01(hsl.l);
-        return Color(hsl);
-    }
-
-    function brighten(color, amount) {
-        amount = (amount === 0) ? 0 : (amount || 10);
-        var rgb = Color(color).toRgb();
-        rgb.r = mathMax(0, mathMin(255, rgb.r - mathRound(255 * - (amount / 100))));
-        rgb.g = mathMax(0, mathMin(255, rgb.g - mathRound(255 * - (amount / 100))));
-        rgb.b = mathMax(0, mathMin(255, rgb.b - mathRound(255 * - (amount / 100))));
-        return Color(rgb);
-    }
-
-    function darken (color, amount) {
-        amount = (amount === 0) ? 0 : (amount || 10);
-        var hsl = Color(color).toHsl();
-        hsl.l -= amount / 100;
-        hsl.l = clamp01(hsl.l);
-        return Color(hsl);
-    }
-
-    // Spin takes a positive or negative amount within [-360, 360] indicating the change of hue.
-    // Values outside of this range will be wrapped into this range.
-    function spin(color, amount) {
-        var hsl = Color(color).toHsl();
-        var hue = (mathRound(hsl.h) + amount) % 360;
-        hsl.h = hue < 0 ? 360 + hue : hue;
-        return Color(hsl);
-    }
-
-    // Combination Functions
-    // ---------------------
-    // Thanks to jQuery xColor for some of the ideas behind these
-    // <https://github.com/infusion/jQuery-xcolor/blob/master/jquery.xcolor.js>
-
-    function complement(color) {
-        var hsl = Color(color).toHsl();
-        hsl.h = (hsl.h + 180) % 360;
-        return Color(hsl);
-    }
-
-    function triad(color) {
-        var hsl = Color(color).toHsl();
-        var h = hsl.h;
-        return [
-            Color(color),
-            Color({ h: (h + 120) % 360, s: hsl.s, l: hsl.l }),
-            Color({ h: (h + 240) % 360, s: hsl.s, l: hsl.l })
-        ];
-    }
-
-    function tetrad(color) {
-        var hsl = Color(color).toHsl();
-        var h = hsl.h;
-        return [
-            Color(color),
-            Color({ h: (h + 90) % 360, s: hsl.s, l: hsl.l }),
-            Color({ h: (h + 180) % 360, s: hsl.s, l: hsl.l }),
-            Color({ h: (h + 270) % 360, s: hsl.s, l: hsl.l })
-        ];
-    }
-
-    function splitcomplement(color) {
-        var hsl = Color(color).toHsl();
-        var h = hsl.h;
-        return [
-            Color(color),
-            Color({ h: (h + 72) % 360, s: hsl.s, l: hsl.l}),
-            Color({ h: (h + 216) % 360, s: hsl.s, l: hsl.l})
-        ];
-    }
-
-    function analogous(color, results, slices) {
-        results = results || 6;
-        slices = slices || 30;
-
-        var hsl = Color(color).toHsl();
-        var part = 360 / slices;
-        var ret = [Color(color)];
-
-        for (hsl.h = ((hsl.h - (part * results >> 1)) + 720) % 360; --results; ) {
-            hsl.h = (hsl.h + part) % 360;
-            ret.push(Color(hsl));
-        }
-        return ret;
-    }
-
-    function monochromatic(color, results) {
-        results = results || 6;
-        var hsv = Color(color).toHsv();
-        var h = hsv.h, s = hsv.s, v = hsv.v;
-        var ret = [];
-        var modification = 1 / results;
-
-        while (results--) {
-            ret.push(Color({ h: h, s: s, v: v}));
-            v = (v + modification) % 1;
-        }
-
-        return ret;
-    }
-
+	return Color.named = named;
+});
+define('skylark-graphics-color/misc',[
+	"./Color"
+],function(
+	Color
+){
     // Utility Functions
     // ---------------------
-
-    Color.mix = function(color1, color2, amount) {
-        amount = (amount === 0) ? 0 : (amount || 50);
-
-        var rgb1 = Color(color1).toRgb();
-        var rgb2 = Color(color2).toRgb();
-
-        var p = amount / 100;
-        var w = p * 2 - 1;
-        var a = rgb2.a - rgb1.a;
-
-        var w1;
-
-        if (w * a == -1) {
-            w1 = w;
-        } else {
-            w1 = (w + a) / (1 + w * a);
-        }
-
-        w1 = (w1 + 1) / 2;
-
-        var w2 = 1 - w1;
-
-        var rgba = {
-            r: rgb2.r * w1 + rgb1.r * w2,
-            g: rgb2.g * w1 + rgb1.g * w2,
-            b: rgb2.b * w1 + rgb1.b * w2,
-            a: rgb2.a * p  + rgb1.a * (1 - p)
-        };
-
-        return Color(rgba);
-    };
-
 
     // Readability Functions
     // ---------------------
@@ -11861,9 +12899,9 @@ define('skylark-data-color/Color',[
     // Analyze the 2 colors and returns an object with the following properties:
     //    `brightness`: difference in brightness between the two colors
     //    `color`: difference in color/hue between the two colors
-    Color.readability = function(color1, color2) {
-        var c1 = Color(color1);
-        var c2 = Color(color2);
+    function readability(color1, color2) {
+        var c1 = color1;
+        var c2 = color2;
         var rgb1 = c1.toRgb();
         var rgb2 = c2.toRgb();
         var brightnessA = c1.getBrightness();
@@ -11878,24 +12916,24 @@ define('skylark-data-color/Color',[
             brightness: Math.abs(brightnessA - brightnessB),
             color: colorDiff
         };
-    };
+    }
 
     // `readable`
     // http://www.w3.org/TR/AERT#color-contrast
     // Ensure that foreground and background color combinations provide sufficient contrast.
     // *Example*
     //    Color.isReadable("#000", "#111") => false
-    Color.isReadable = function(color1, color2) {
-        var readability = Color.readability(color1, color2);
+    function isReadable(color1, color2) {
+        var readability = readability(color1, color2);
         return readability.brightness > 125 && readability.color > 500;
-    };
+    }
 
     // `mostReadable`
     // Given a base color and a list of possible foreground or background
     // colors for that base, returns the most readable color.
     // *Example*
     //    Color.mostReadable("#123", ["#fff", "#000"]) => "#000"
-    Color.mostReadable = function(baseColor, colorList) {
+    function mostReadable(baseColor, colorList) {
         var bestColor = null;
         var bestScore = 0;
         var bestIsReadable = false;
@@ -11904,7 +12942,7 @@ define('skylark-data-color/Color',[
             // We normalize both around the "acceptable" breaking point,
             // but rank brightness constrast higher than hue.
 
-            var readability = Color.readability(baseColor, colorList[i]);
+            var readability = readability(baseColor, colorList[i]);
             var readable = readability.brightness > 125 && readability.color > 500;
             var score = 3 * (readability.brightness / 125) + (readability.color / 500);
 
@@ -11913,25 +12951,39 @@ define('skylark-data-color/Color',[
                 ((! readable) && (! bestIsReadable) && score > bestScore)) {
                 bestIsReadable = readable;
                 bestScore = score;
-                bestColor = Color(colorList[i]);
+                bestColor = new Color(colorList[i]);
             }
         }
         return bestColor;
+    }
+
+    return  {
+        readability,
+        isReadable,
+        mostReadable
     };
-
-
+	
+});
+define('skylark-graphics-color/main',[
+    "./Color",
+    "./named",
+    "./misc",
+    "./parse"
+], function(Color) {
 	return Color;
 });
+define('skylark-graphics-color', ['skylark-graphics-color/main'], function (main) { return main; });
 
-define('skylark-domx-colorpicker/draggable',[
+define('skylark-domx-colorpicker/Indicator',[
    "skylark-langx/skylark",
     "skylark-langx/langx",
     "skylark-domx-browser",
     "skylark-domx-noder",
     "skylark-domx-eventer",
     "skylark-domx-finder",
-    "skylark-domx-query"
-],function(skylark, langx, browser, noder, eventer,finder, $) {
+    "skylark-domx-query",
+    "skylark-domx-plugins"    
+],function(skylark, langx, browser, noder, eventer,finder, $,plugins) {
     /**
     * Lightweight drag helper.  Handles containment within the element, so that
     * when dragging, the x is within [0,element.width] and y is within [0,element.height]
@@ -11989,6 +13041,8 @@ define('skylark-domx-colorpicker/draggable',[
         function start(e) {
             var rightclick = (e.which) ? (e.which == 3) : (e.button == 2);
 
+            var onstart = this.options.onstart || funcs.noop;
+
             if (!rightclick && !dragging) {
                 if (onstart.apply(element, arguments) !== false) {
                     dragging = true;
@@ -12023,7 +13077,97 @@ define('skylark-domx-colorpicker/draggable',[
         $(element).on("touchstart mousedown", start);
     }
 	
-	return draggable;
+
+    var Indicator = plugins.Plugin.inherit({
+        klassName : "Indicator",
+
+        pluginName : "domx.indicator",
+
+        options : {
+        },
+
+        _construct: function(elm, options) {
+            this.overrided(elm,options);
+
+            this.listenTo(this.elmx(),"mousedown" , (e) => {
+                this._start(e);
+            });
+
+        },
+
+        _move : function(e) {
+            if (this._dragging) {
+                var offset = this._offset,
+                    pageX = e.pageX,
+                    pageY = e.pageY,
+                    maxWidth = this._maxWidth,
+                    maxHeight = this._maxHeight;
+
+                var dragX = Math.max(0, Math.min(pageX - offset.left, maxWidth));
+                var dragY = Math.max(0, Math.min(pageY - offset.top, maxHeight));
+
+                var onmove = this.options.onmove;
+                if (onmove) {
+                    onmove.apply(this._elm, [dragX, dragY, e]);
+                }
+            }
+        },
+
+        _start : function(e) {
+            var rightclick = (e.which) ? (e.which == 3) : (e.button == 2);
+
+            if (!rightclick && !this._dragging) {
+                var onstart = this.options.onstart;
+                if (!onstart || onstart.apply(this._elm, arguments) !== false) {
+                    this._dragging = true;
+                    var $el = this.$();
+
+                    this._maxHeight = $el.height();
+                    this._maxWidth = $el.width();
+                    this._offset = $el.offset();
+
+                    var $doc = this.$(document)
+
+                    this.listenTo($doc,{
+                        "mousemove" : (e) => {
+                            this._move(e);
+                        },
+                        "mouseup" : (e) => {
+                            this._stop(e);
+                        }                
+                    });
+                    $doc.find("body").addClass("sp-dragging");
+
+                    this._move(e);
+
+                    eventer.stop(e);
+                }
+            }
+        },
+
+        _stop : function(e) {
+            var $doc = this.$(document);
+            if (this._dragging) {
+                this.unlistenTo($doc);
+                $doc.find("body").removeClass("sp-dragging");
+
+                onstop = this.options.onstop;
+
+                // Wait a tick before notifying observers to allow the click event
+                // to fire in Chrome.
+                if (onstop) {
+                    this._delay(function() {
+                        onstop.apply(this._elm, arguments);
+                    });
+                }
+            }
+            this._dragging = false;            
+        }
+    });
+
+    plugins.register(Indicator);
+
+	return Indicator;
 });
 define('skylark-domx-colorpicker/ColorPicker',[
    "skylark-langx/skylark",
@@ -12035,57 +13179,16 @@ define('skylark-domx-colorpicker/ColorPicker',[
     "skylark-domx-eventer",
     "skylark-domx-styler",
     "skylark-domx-fx",
-    "skylark-data-color/colors",
-    "skylark-data-color/Color",
-    "./draggable"
-],function(skylark, langx, browser, noder, finder, $,eventer, styler,fx,colors, Color,draggable) {
+    "skylark-domx-plugins",
+    "skylark-domx-popups",
+    "skylark-graphics-color",
+    "./Indicator"
+],function(skylark, langx, browser, noder, finder, $,eventer, styler,fx,plugins,popups,Color,Indicator) {
     "use strict";
 
     var noop = langx.noop;
 
-    var defaultOpts = {
-
-        // Callbacks
-        beforeShow: noop,
-        move: noop,
-        change: noop,
-        show: noop,
-        hide: noop,
-
-        // Options
-        color: false,
-        flat: false,
-        showInput: false,
-        allowEmpty: false,
-        showButtons: true,
-        clickoutFiresChange: true,
-        showInitial: false,
-        showPalette: false,
-        showPaletteOnly: false,
-        hideAfterPaletteSelect: false,
-        togglePaletteOnly: false,
-        showSelectionPalette: true,
-        localStorageKey: false,
-        appendTo: "body",
-        maxSelectionSize: 7,
-        cancelText: "cancel",
-        chooseText: "choose",
-        togglePaletteMoreText: "more",
-        togglePaletteLessText: "less",
-        clearText: "Clear Color Selection",
-        noColorSelectedText: "No Color Selected",
-        preferredFormat: false,
-        className: "", // Deprecated - use containerClassName and replacerClassName instead.
-        containerClassName: "",
-        replacerClassName: "",
-        showAlpha: false,
-        theme: "sp-light",
-        palette: [["#ffffff", "#000000", "#ff0000", "#ff8000", "#ffff00", "#008000", "#0000ff", "#4b0082", "#9400d3"]],
-        selectionPalette: [],
-        disabled: false,
-        offset: null
-    },
-    pickers = [],
+    var pickers = [],
     replaceInput = [
         "<div class='sp-replacer'>",
             "<div class='sp-preview'><div class='sp-preview-inner'></div></div>",
@@ -12150,7 +13253,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
         for (var i = 0; i < p.length; i++) {
             var current = p[i];
             if(current) {
-                var tiny = colors.Color(current);
+                var tiny = Color.parse(current);
                 var c = tiny.toHsl().l < 0.5 ? "sp-thumb-el sp-thumb-dark" : "sp-thumb-el sp-thumb-light";
                 c += (Color.equals(color, current)) ? " sp-thumb-active" : "";
                 var formattedString = tiny.toString(opts.preferredFormat || "rgb");
@@ -12177,32 +13280,68 @@ define('skylark-domx-colorpicker/ColorPicker',[
         }
     }
 
-    function instanceOptions(o, callbackContext) {
-        var opts = langx.mixin({}, defaultOpts, o);
-        opts.callbacks = {
-            'move': bind(opts.move, callbackContext),
-            'change': bind(opts.change, callbackContext),
-            'show': bind(opts.show, callbackContext),
-            'hide': bind(opts.hide, callbackContext),
-            'beforeShow': bind(opts.beforeShow, callbackContext)
-        };
 
-        return opts;
-    }
-
-
-
-    var ColorPicker = langx.Evented.inherit({
+    var ColorPicker = plugins.Plugin.inherit({
         klassName : "ColorPicker",
 
-        init:function (element, o) {
+        pluginName : "domx.colorPicker",
 
-            var opts = instanceOptions(o, element),
+        options : {
+
+            // Callbacks
+            beforeShow: noop,
+            move: noop,
+            change: noop,
+            show: noop,
+            hide: noop,
+
+            // Options
+            color: false,
+            flat: false,
+            showInput: false,
+            allowEmpty: false,
+            showButtons: true,
+            clickoutFiresChange: true,
+            showInitial: false,
+            showPalette: false,
+            showPaletteOnly: false,
+            hideAfterPaletteSelect: false,
+            togglePaletteOnly: false,
+            showSelectionPalette: true,
+            localStorageKey: false,
+            appendTo: "body",
+            maxSelectionSize: 7,
+            cancelText: "cancel",
+            chooseText: "choose",
+            togglePaletteMoreText: "more",
+            togglePaletteLessText: "less",
+            clearText: "Clear Color Selection",
+            noColorSelectedText: "No Color Selected",
+            preferredFormat: false,
+            className: "", // Deprecated - use containerClassName and replacerClassName instead.
+            containerClassName: "",
+            replacerClassName: "",
+            showAlpha: false,
+            theme: "sp-light",
+            palette: [
+                ["#ffffff", "#000000", "#ff0000", "#ff8000", "#ffff00", "#008000", "#0000ff", "#4b0082", "#9400d3"]
+            ],
+            selectionPalette: [],
+            disabled: false,
+            offset: null
+
+        },
+
+         _construct: function(elm, options) {
+            this.overrided(elm,options);
+
+
+
+            var opts = this.options,
+                element = this._elm,
                 flat = opts.flat,
                 showSelectionPalette = opts.showSelectionPalette,
-                localStorageKey = opts.localStorageKey,
                 theme = opts.theme,
-                callbacks = opts.callbacks,
                 resize = langx.debounce(reflow, 10),
                 visible = false,
                 isDragging = false,
@@ -12225,6 +13364,15 @@ define('skylark-domx-colorpicker/ColorPicker',[
                 maxSelectionSize = opts.maxSelectionSize,
                 draggingClass = "sp-dragging",
                 shiftMovementDirection = null;
+
+
+            var callbacks = opts.callbacks = {
+                'move': bind(opts.move, elm),
+                'change': bind(opts.change, elm),
+                'show': bind(opts.show, elm),
+                'hide': bind(opts.hide, elm),
+                'beforeShow': bind(opts.beforeShow, elm)
+            };
 
             var doc = element.ownerDocument,
                 body = doc.body,
@@ -12273,7 +13421,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     paletteLookup = {};
                     for (var i = 0; i < paletteArray.length; i++) {
                         for (var j = 0; j < paletteArray[i].length; j++) {
-                            var rgb = Color(paletteArray[i][j]).toRgbString();
+                            var rgb = Color.parse(paletteArray[i][j]).toRgbString();
                             paletteLookup[rgb] = true;
                         }
                     }
@@ -12321,8 +13469,6 @@ define('skylark-domx-colorpicker/ColorPicker',[
 
                     appendTo.append(container);
                 }
-
-                updateSelectionPaletteFromStorage();
 
                 offsetElement.on("click.ColorPicker touchstart.ColorPicker", function (e) {
                     if (!disabled) {
@@ -12404,57 +13550,68 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     applyOptions();
                 });
 
-                draggable(alphaSlider, function (dragX, dragY, e) {
-                    currentAlpha = (dragX / alphaWidth);
-                    isEmpty = false;
-                    if (e.shiftKey) {
-                        currentAlpha = Math.round(currentAlpha * 10) / 10;
-                    }
+                alphaSlider.plugin("domx.indicator", {
+                    "onmove" :   function (dragX, dragY, e) {
+                        currentAlpha = (dragX / alphaWidth);
+                        isEmpty = false;
+                        if (e.shiftKey) {
+                            currentAlpha = Math.round(currentAlpha * 10) / 10;
+                        }
 
-                    move();
-                }, dragStart, dragStop);
+                        move();
+                    }, 
+                    "onstart" : dragStart, 
+                    "onstop" :dragStop
+                });
 
-                draggable(slider, function (dragX, dragY) {
-                    currentHue = parseFloat(dragY / slideHeight);
-                    isEmpty = false;
-                    if (!opts.showAlpha) {
-                        currentAlpha = 1;
-                    }
-                    move();
-                }, dragStart, dragStop);
+                slider.plugin("domx.indicator", {
+                    "onmove" :   function (dragX, dragY, e) {
+                        currentHue = parseFloat(dragY / slideHeight);
+                        isEmpty = false;
+                        if (!opts.showAlpha) {
+                            currentAlpha = 1;
+                        }
+                        move();
+                    }, 
+                    "onstart" : dragStart, 
+                    "onstop" :dragStop
+                });
 
-                draggable(dragger, function (dragX, dragY, e) {
+                dragger.plugin("domx.indicator", {
+                    "onmove" :   function (dragX, dragY, e) {
 
-                    // shift+drag should snap the movement to either the x or y axis.
-                    if (!e.shiftKey) {
-                        shiftMovementDirection = null;
-                    }
-                    else if (!shiftMovementDirection) {
-                        var oldDragX = currentSaturation * dragWidth;
-                        var oldDragY = dragHeight - (currentValue * dragHeight);
-                        var furtherFromX = Math.abs(dragX - oldDragX) > Math.abs(dragY - oldDragY);
+                        // shift+drag should snap the movement to either the x or y axis.
+                        if (!e.shiftKey) {
+                            shiftMovementDirection = null;
+                        }
+                        else if (!shiftMovementDirection) {
+                            var oldDragX = currentSaturation * dragWidth;
+                            var oldDragY = dragHeight - (currentValue * dragHeight);
+                            var furtherFromX = Math.abs(dragX - oldDragX) > Math.abs(dragY - oldDragY);
 
-                        shiftMovementDirection = furtherFromX ? "x" : "y";
-                    }
+                            shiftMovementDirection = furtherFromX ? "x" : "y";
+                        }
 
-                    var setSaturation = !shiftMovementDirection || shiftMovementDirection === "x";
-                    var setValue = !shiftMovementDirection || shiftMovementDirection === "y";
+                        var setSaturation = !shiftMovementDirection || shiftMovementDirection === "x";
+                        var setValue = !shiftMovementDirection || shiftMovementDirection === "y";
 
-                    if (setSaturation) {
-                        currentSaturation = parseFloat(dragX / dragWidth);
-                    }
-                    if (setValue) {
-                        currentValue = parseFloat((dragHeight - dragY) / dragHeight);
-                    }
+                        if (setSaturation) {
+                            currentSaturation = parseFloat(dragX / dragWidth);
+                        }
+                        if (setValue) {
+                            currentValue = parseFloat((dragHeight - dragY) / dragHeight);
+                        }
 
-                    isEmpty = false;
-                    if (!opts.showAlpha) {
-                        currentAlpha = 1;
-                    }
+                        isEmpty = false;
+                        if (!opts.showAlpha) {
+                            currentAlpha = 1;
+                        }
 
-                    move();
-
-                }, dragStart, dragStop);
+                        move();
+                    }, 
+                    "onstart" : dragStart, 
+                    "onstop" :dragStop
+                });
 
                 if (!!initialColor) {
                     set(initialColor);
@@ -12462,7 +13619,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     // In case color was black - update the preview UI and set the format
                     // since the set function will not run (default color is black).
                     updateUI();
-                    currentPreferredFormat = opts.preferredFormat || Color(initialColor).format;
+                    currentPreferredFormat = opts.preferredFormat || Color.parse(initialColor).format;
 
                     addColorToSelectionPalette(initialColor);
                 }
@@ -12501,44 +13658,15 @@ define('skylark-domx-colorpicker/ColorPicker',[
                 initialColorContainer.on(paletteEvent, ".sp-thumb-el:nth-child(1)", { ignore: true }, paletteElementClick);
             }
 
-            function updateSelectionPaletteFromStorage() {
-
-                if (localStorageKey && window.localStorage) {
-
-                    // Migrate old palettes over to new format.  May want to remove this eventually.
-                    try {
-                        var oldPalette = window.localStorage[localStorageKey].split(",#");
-                        if (oldPalette.length > 1) {
-                            delete window.localStorage[localStorageKey];
-                            langx.each(oldPalette, function(i, c) {
-                                 addColorToSelectionPalette(c);
-                            });
-                        }
-                    }
-                    catch(e) { }
-
-                    try {
-                        selectionPalette = window.localStorage[localStorageKey].split(";");
-                    }
-                    catch (e) { }
-                }
-            }
 
             function addColorToSelectionPalette(color) {
                 if (showSelectionPalette) {
-                    var rgb = Color(color).toRgbString();
+                    var rgb = Color.parse(color).toRgbString();
                     if (!paletteLookup[rgb] && langx.inArray(rgb, selectionPalette) === -1) {
                         selectionPalette.push(rgb);
                         while(selectionPalette.length > maxSelectionSize) {
                             selectionPalette.shift();
                         }
-                    }
-
-                    if (localStorageKey && window.localStorage) {
-                        try {
-                            window.localStorage[localStorageKey] = selectionPalette.join(";");
-                        }
-                        catch(e) { }
                     }
                 }
             }
@@ -12547,7 +13675,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
                 var unique = [];
                 if (opts.showPalette) {
                     for (var i = 0; i < selectionPalette.length; i++) {
-                        var rgb = Color(selectionPalette[i]).toRgbString();
+                        var rgb = Color.parse(selectionPalette[i]).toRgbString();
 
                         if (!paletteLookup[rgb]) {
                             unique.push(selectionPalette[i]);
@@ -12565,8 +13693,6 @@ define('skylark-domx-colorpicker/ColorPicker',[
                 var html = langx.map(paletteArray, function (palette, i) {
                     return paletteTemplate(palette, currentColor, "sp-palette-row sp-palette-row-" + i, opts);
                 });
-
-                updateSelectionPaletteFromStorage();
 
                 if (selectionPalette) {
                     html.push(paletteTemplate(getUniqueSelectionPalette(), currentColor, "sp-palette-row sp-palette-row-selection", opts));
@@ -12609,7 +13735,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     updateOriginalInput();
                 }
                 else {
-                    var tiny = Color(value);
+                    var tiny = Color.parse(value);
                     if (tiny.isValid()) {
                         set(tiny);
                         move();
@@ -12619,6 +13745,31 @@ define('skylark-domx-colorpicker/ColorPicker',[
                         textInput.addClass("sp-validation-error");
                     }
                 }
+            }
+
+
+            function onkeydown(e) {
+                // Close on ESC
+                if (e.keyCode === 27) {
+                    hide();
+                }
+            }
+
+            function clickout(e) {
+                // Return on right click.
+                if (e.button == 2) { return; }
+
+                // If a drag event was happening during the mouseup, don't hide
+                // on click.
+                if (isDragging) { return; }
+
+                if (clickoutFiresChange) {
+                    updateOriginalInput(true);
+                }
+                else {
+                    revert();
+                }
+                hide();
             }
 
             function toggle() {
@@ -12662,31 +13813,6 @@ define('skylark-domx-colorpicker/ColorPicker',[
                 callbacks.show(colorOnShow);
                 boundElement.trigger('show.ColorPicker', [ colorOnShow ]);
             }
-
-            function onkeydown(e) {
-                // Close on ESC
-                if (e.keyCode === 27) {
-                    hide();
-                }
-            }
-
-            function clickout(e) {
-                // Return on right click.
-                if (e.button == 2) { return; }
-
-                // If a drag event was happening during the mouseup, don't hide
-                // on click.
-                if (isDragging) { return; }
-
-                if (clickoutFiresChange) {
-                    updateOriginalInput(true);
-                }
-                else {
-                    revert();
-                }
-                hide();
-            }
-
             function hide() {
                 // Return if hiding is unnecessary
                 if (!visible || flat) { return; }
@@ -12721,7 +13847,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     isEmpty = true;
                 } else {
                     isEmpty = false;
-                    newColor = colors.Color(color);
+                    newColor = Color.parse(color);
                     newHsv = newColor.toHsv();
 
                     currentHue = (newHsv.h % 360) / 360;
@@ -12743,12 +13869,21 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     return null;
                 }
 
-                return Color.fromRatio({
+
+                /*
+                return fromRatio({
                     h: currentHue,
                     s: currentSaturation,
                     v: currentValue,
                     a: Math.round(currentAlpha * 1000) / 1000
                 }, { format: opts.format || currentPreferredFormat });
+                */
+                return Color.parse({
+                    h: currentHue * 360,
+                    s: currentSaturation,
+                    v: currentValue,
+                    a: Math.round(currentAlpha * 1000) / 1000
+                });
             }
 
             function isValid() {
@@ -12769,7 +13904,12 @@ define('skylark-domx-colorpicker/ColorPicker',[
                 updateHelperLocations();
 
                 // Update dragger background color (gradients take care of saturation and value).
-                var flatColor = Color.fromRatio({ h: currentHue, s: 1, v: 1 });
+                //var flatColor = Color.fromRatio({ h: currentHue, s: 1, v: 1 });
+                var flatColor = Color.parse({ 
+                    h: currentHue * 360, 
+                    s: 1, 
+                    v: 1 
+                });
                 dragger.css("background-color", flatColor.toHexString());
 
                 // Get a format that alpha will be included in (hex and names ignore alpha)
@@ -12801,11 +13941,11 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     if (opts.showAlpha) {
                         var rgb = realColor.toRgb();
                         rgb.a = 0;
-                        var realAlpha = Color(rgb).toRgbString();
+                        var realAlpha = Color.parse(rgb).toRgbString();
                         var gradient = "linear-gradient(left, " + realAlpha + ", " + realHex + ")";
 
                         if (browser.isIE) {
-                            alphaSliderInner.css("filter", Color(realAlpha).toFilter({ gradientType: 1 }, realHex));
+                            alphaSliderInner.css("filter", Color.parse(realAlpha).toFilter({ gradientType: 1 }, realHex));
                         }
                         else {
                             alphaSliderInner.css("background", "-webkit-" + gradient);
@@ -12916,7 +14056,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
                     if (opts.offset) {
                         container.offset(opts.offset);
                     } else {
-                        container.offset(getOffset(container, offsetElement));
+                        container.offset(popups.calcOffset(container[0], offsetElement[0]));
                     }
                 }
 
@@ -12973,7 +14113,7 @@ define('skylark-domx-colorpicker/ColorPicker',[
 
             initialize();
 
-            var spect = {
+            langx.mixin(this, {
                 show: show,
                 hide: hide,
                 toggle: toggle,
@@ -12989,51 +14129,12 @@ define('skylark-domx-colorpicker/ColorPicker',[
                 get: get,
                 destroy: destroy,
                 container: container
-            };
-
-            spect.id = pickers.push(spect) - 1;
-
-            return spect;
+            });
         }
     });
 
 
-    /**
-    * checkOffset - get the offset below/above and left/right element depending on screen position
-    * Thanks https://github.com/jquery/jquery-ui/blob/master/ui/jquery.ui.datepicker.js
-    */
-    function getOffset(picker, input) {
-        var extraY = 0;
-        var dpWidth = picker.outerWidth();
-        var dpHeight = picker.outerHeight();
-        var inputHeight = input.outerHeight();
-        var doc = picker[0].ownerDocument;
-        var docElem = doc.documentElement;
-        var viewWidth = docElem.clientWidth + $(doc).scrollLeft();
-        var viewHeight = docElem.clientHeight + $(doc).scrollTop();
-        var offset = input.offset();
-        var offsetLeft = offset.left;
-        var offsetTop = offset.top;
-
-        offsetTop += inputHeight;
-
-        offsetLeft -=
-            Math.min(offsetLeft, (offsetLeft + dpWidth > viewWidth && viewWidth > dpWidth) ?
-            Math.abs(offsetLeft + dpWidth - viewWidth) : 0);
-
-        offsetTop -=
-            Math.min(offsetTop, ((offsetTop + dpHeight > viewHeight && viewHeight > dpHeight) ?
-            Math.abs(dpHeight + inputHeight - extraY) : extraY));
-
-        return {
-            top: offsetTop,
-            bottom: offset.bottom,
-            left: offsetLeft,
-            right: offset.right,
-            width: offset.width,
-            height: offset.height
-        };
-    }
+    plugins.register(ColorPicker,"colorPicker");
 
     /**
     * stopPropagation - makes the code only doing this a little easier to read in line
@@ -13054,66 +14155,9 @@ define('skylark-domx-colorpicker/ColorPicker',[
         };
     }
 
-
-    /**
-    * Define a query plugin
-    */
-    var dataID = "ColorPicker.id";
-    
-    function Plugin(opts, extra) {
-
-        if (typeof opts == "string") {
-
-            var returnValue = this;
-            var args = Array.prototype.slice.call( arguments, 1 );
-
-            this.each(function () {
-                var spect = pickers[$(this).data(dataID)];
-                if (spect) {
-                    var method = spect[opts];
-                    if (!method) {
-                        throw new Error( "skylark-ui-colorpicker: no such method: '" + opts + "'" );
-                    }
-
-                    if (opts == "get") {
-                        returnValue = spect.get();
-                    }
-                    else if (opts == "container") {
-                        returnValue = spect.container;
-                    }
-                    else if (opts == "option") {
-                        returnValue = spect.option.apply(spect, args);
-                    }
-                    else if (opts == "destroy") {
-                        spect.destroy();
-                        $(this).removeData(dataID);
-                    }
-                    else {
-                        method.apply(spect, args);
-                    }
-                }
-            });
-
-            return returnValue;
-        }
-
-        // Initializing a new instance of ColorPicker
-        return this.colorPicker("destroy").each(function () {
-            var options = langx.mixin({}, $(this).data(), opts);
-            var spect = ColorPicker(this, options);
-            $(this).data(dataID, spect.id);
-        });
-    }
-
-    ColorPicker.load = true;
-    ColorPicker.loadOpts = {};
-    ColorPicker.draggable = draggable;
-    ColorPicker.defaults = defaultOpts;
-
     ColorPicker.localization = { };
     ColorPicker.palettes = { };
 
-    $.fn.colorPicker = Plugin;
 
     return skylark.attach("domx.ColorPicker",ColorPicker);
 
@@ -13286,11 +14330,10 @@ define('skylark-domx-gradienter/Gradienter',[
     "skylark-domx-finder",
     "skylark-domx-query",
     "skylark-domx-plugins",    
-    "skylark-data-color/colors",
-    "skylark-data-color/Color",
+    "skylark-graphics-color/Color",
     "skylark-domx-colorpicker/ColorPicker",
     "./Drag"
-],function(skylark, langx, browser, noder, eventer,finder, $, plugins,colors, Color, ColorPicker,Drag) {
+],function(skylark, langx, browser, noder, eventer,finder, $, plugins,Color, ColorPicker,Drag) {
 
 
     /*
