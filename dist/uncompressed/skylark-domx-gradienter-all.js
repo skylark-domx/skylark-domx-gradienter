@@ -2768,7 +2768,7 @@ define('skylark-langx-events/Listener',[
                 //listenTo(obj,callbacks,one)
                 var callbacks = event;
                 for (var name in callbacks) {
-                    this.listeningTo(obj,name,callbacks[name],one);
+                    this.listenTo(obj,name,callbacks[name],one);
                 }
                 return this;
             }
@@ -11765,7 +11765,7 @@ define('skylark-graphics-color/Color',[
                 return false;
             }
 
-            return hexNames[rgbToHex(this._r, this._g, this._b, true)] || false;
+            return hexNames[conversion.rgbToHex(this._r, this._g, this._b, true)] || false;
         },
 
         toFilter: function(secondColor) {
