@@ -4,10 +4,17 @@
 
         <title>GradX</title>
 
-        <link type="text/css" rel="stylesheet" href="../skins/default/gradienter.css" />
-        <link type="text/css" rel="stylesheet" href="../node_modules/skylark-spectrum/skins/default/colorpicker.css" />
+        <script src="lib/js/skylark-jquery-all.js"></script>
+        <!--  <script src="lib/js/jquery-ui.js"></script>
+        -->
 
-        <script src="../dist/uncompressed/skylark-gradx-all.js"></script>
+        <!-- <link type="text/css" rel="stylesheet" href="lib/css/jquery-ui.css" />-->
+        <link type="text/css" rel="stylesheet" href="gradX.css" />
+        <link type="text/css" rel="stylesheet" href="colorpicker/css/colorpicker.css" />
+        <script src="colorpicker/js/colorpicker.js"></script>
+        <script src="dom-drag.js"></script>
+
+        <script src="gradX.js"></script>
 
 
         <style>
@@ -87,7 +94,7 @@
 
         <script>
 
-            skylarkjs.intg.gradx("#gradX", {
+            gradX("#gradX", {
                 targets: [".target"]
             });
 
