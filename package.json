@@ -1,6 +1,6 @@
 {
   "name": "skylark-gradx",
-  "description": "The skylark gradient picker widget",
+  "description": "A version of gradX that ported to running on skylarkjs",
   "version": "0.9.0",
   "keywords": [
     "css",
@@ -21,7 +21,6 @@
   },
   "license": "MIT",
   "dependencies": {
-    "skylark-domx-interact": "git+https://github.com/skylark-domx/skylark-domx-interact.git#master",
     "skylark-graphics-color": "git+https://github.com/skylark-graphics/skylark-graphics-color.git#master",
     "skylark-langx": "git+https://github.com/skylark-langx/skylark-langx.git#master",
     "skylark-spectrum": "git+https://github.com/skylark-integration/skylark-spectrum.git#master"
